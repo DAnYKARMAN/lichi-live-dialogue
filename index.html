@@ -491,9 +491,17 @@ async function resumeMic() {
     toast(UI.A.micError, UI.B.micError);
   }
 }
+// Réduction propre de la qualité du son (ex : 48 000 -> 16 000 Hz) : on fait la
+// MOYENNE des échantillons au lieu d'en jeter deux sur trois. Le son envoyé à
+// Gemini est plus net (moins de « grésillement » sur les voyelles).
 function resample(d, from, to) {
   const r = from / to, n = Math.floor(d.length / r), o = new Float32Array(n);
-  for (let i = 0; i < n; i++) o[i] = d[Math.floor(i * r)] || 0;
+  for (let i = 0; i < n; i++) {
+    const debut = i * r, fin = Math.min(d.length, debut + r);
+    let somme = 0, poids = 0;
+    for (let j = Math.floor(debut); j < fin; j++) { somme += d[j]; poids++; }
+    o[i] = poids ? somme / poids : 0;
+  }
   return o;
 }
 function pcm16b64(f) {
