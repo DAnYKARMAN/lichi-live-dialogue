@@ -311,7 +311,10 @@ function setupHalves() {
   for (const side of ["A", "B"]) {
     const lang = S[side];
     const half = document.getElementById("half" + side);
-    half.setAttribute("dir", RTL.includes(lang.split("-")[0]) ? "rtl" : "ltr");
+    const sens = RTL.includes(lang.split("-")[0]) ? "rtl" : "ltr";
+    half.setAttribute("dir", sens);
+    document.getElementById("state" + side).setAttribute("dir", sens);
+    const ph = document.getElementById("ph" + side); if (ph) ph.setAttribute("dir", sens);
     half.setAttribute("lang", lang);
     document.getElementById("lang" + side).textContent = cap(langName(lang, lang));
   }
@@ -636,7 +639,12 @@ function bubble(feed, own, label) {
   const ph = feed.querySelector(".placeholder"); if (ph) ph.remove();
   const el = document.createElement("div");
   el.className = "msg live" + (own ? " own" : "");
-  el.setAttribute("dir", "auto");
+  // Sens d'écriture IMPOSÉ par la langue de cette moitié d'écran (hébreu, arabe… = droite à gauche),
+  // même si la phrase commence par un nom, un chiffre ou un mot en lettres latines.
+  const side = feed.id === "feedA" ? "A" : "B";
+  const rtl = RTL.includes(S[side].split("-")[0]);
+  el.setAttribute("dir", rtl ? "rtl" : "ltr");
+  el.style.textAlign = rtl ? "right" : "left";
   if (own) { const t = document.createElement("span"); t.className = "tag"; t.textContent = label; el.appendChild(t); }
   const tx = document.createElement("span"); tx.className = "tx"; el.appendChild(tx);
   feed.appendChild(el);
