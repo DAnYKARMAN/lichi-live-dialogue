@@ -82,8 +82,9 @@
     padding:0 18px;background:var(--bg);border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
   .side{width:56px;height:56px;border-radius:50%;border:1px solid var(--line);background:#fff;font-size:1.5rem;
     display:flex;align-items:center;justify-content:center;cursor:pointer;position:relative;color:var(--text)}
-  .side.off{opacity:.55}
-  .side.off::after{content:"";position:absolute;width:62%;height:3px;background:#B00020;border-radius:2px;transform:rotate(-45deg)}
+  /* Haut-parleur : pulse pendant la lecture à voix haute */
+  .side.speaking{background:linear-gradient(135deg,var(--accent2),var(--accent));color:#fff;border-color:transparent;
+    animation:breath 1.4s ease-in-out infinite}
   .side .lbl{font-weight:800;font-size:1.05rem}
   #mic{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:88px;height:88px;border-radius:50%;
     border:5px solid var(--bg);cursor:pointer;color:#fff;
@@ -92,8 +93,37 @@
   #mic svg{width:38px;height:38px}
   #mic.live{background:linear-gradient(135deg,var(--accent2),var(--accent));animation:breath 2s ease-in-out infinite}
   #mic.busy{opacity:.7}
+  /* Micro sur OFF : gris et barré */
+  #mic.reading{background:linear-gradient(135deg,#9a9398,#6f6970);animation:none}
+  #mic.reading::after,
+  #mic:not(.live):not(.busy)::after{content:"";position:absolute;left:50%;top:50%;width:50px;height:4px;
+    background:#fff;border-radius:2px;transform:translate(-50%,-50%) rotate(-45deg);box-shadow:0 0 0 2px #7d777e}
+  /* Ondes de chaque côté du micro : elles bougent avec la voix quand le micro est sur ON */
+  .waves{position:absolute;top:50%;transform:translateY(-50%);display:flex;align-items:center;gap:4px;height:44px;
+    opacity:0;transition:opacity .3s;pointer-events:none}
+  .waves.on{opacity:1}
+  .waves.left{right:calc(50% + 52px)} .waves.right{left:calc(50% + 52px)}
+  .waves i{display:block;width:4px;height:6px;border-radius:2px;background:var(--accent2);transition:height .08s linear}
   @keyframes breath{0%,100%{box-shadow:0 0 0 0 rgba(224,36,94,.45)}50%{box-shadow:0 0 0 14px rgba(224,36,94,0)}}
 
+  /* TABLETTE (iPad) : tout est plus grand, pour lire à travers la table */
+  @media (min-width:700px) and (min-height:700px){
+    .feed{padding:20px 32px 26px;gap:16px}
+    .msg{font-size:calc(2.3rem * var(--fs));padding:16px 22px}
+    .msg.own{font-size:calc(1.5rem * var(--fs))}
+    .placeholder{font-size:calc(2rem * var(--fs))}
+    .head{padding:14px 32px}
+    .lang{font-size:1.35rem} .state{font-size:1.1rem}
+    .bar{height:92px;padding:0 32px}
+    .side{width:72px;height:72px;font-size:2rem}
+    .side .lbl{font-size:1.35rem}
+    #mic{width:120px;height:120px;border-width:6px}
+    #mic svg{width:52px;height:52px}
+    #mic:not(.live):not(.busy)::after,#mic.reading::after{width:68px;height:5px}
+    .waves{height:60px;gap:6px}
+    .waves.left{right:calc(50% + 72px)} .waves.right{left:calc(50% + 72px)}
+    .waves i{width:6px}
+  }
   .toast{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:30;background:rgba(27,27,31,.9);
     color:#fff;border-radius:16px;padding:12px 18px;font-weight:700;font-size:1rem;display:none;text-align:center;pointer-events:none}
 
@@ -124,7 +154,9 @@
 
   <!-- Commandes au centre -->
   <div class="bar">
-    <button class="side" id="btnVoice" onclick="toggleVoice()" aria-label="Spoken translation on/off">🔊</button>
+    <button class="side" id="btnVoice" onclick="readAloud()" aria-label="Read the last translation aloud">🔊</button>
+    <div class="waves left" id="wavesL"><i></i><i></i><i></i><i></i><i></i></div>
+    <div class="waves right" id="wavesR"><i></i><i></i><i></i><i></i><i></i></div>
     <button id="mic" onclick="toggleMic()" aria-label="Start / pause">
       <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z"/></svg>
     </button>
@@ -226,10 +258,9 @@ const S = {
   micStream: null,
   capCtx: null, capProc: null,
   playCtx: null, playGain: null, nextPlay: 0,
-  voice: true,             // traduction ORALE activée ?
+  history: [],             // les répliques terminées (pour la lecture à voix haute)
   size: 1,
 };
-try { S.voice = localStorage.getItem("lichi_voice") !== "0"; } catch (e) {}
 try { S.size = parseFloat(localStorage.getItem("lichi_size")) || 1; } catch (e) {}
 
 /* =======================================================================
@@ -285,7 +316,6 @@ function setupHalves() {
     document.getElementById("lang" + side).textContent = cap(langName(lang, lang));
   }
   document.documentElement.style.setProperty("--fs", S.size);
-  document.getElementById("btnVoice").classList.toggle("off", !S.voice);
   setStatus("idle");
 }
 
@@ -324,14 +354,6 @@ async function startDialogue() {
 function toggleMic() {
   if (S.running) pauseListening("paused");
   else startListening();
-}
-
-function toggleVoice() {
-  S.voice = !S.voice;
-  try { localStorage.setItem("lichi_voice", S.voice ? "1" : "0"); } catch (e) {}
-  document.getElementById("btnVoice").classList.toggle("off", !S.voice);
-  if (!S.voice) stopPlayback();
-  toast(UI.A[S.voice ? "voiceOn" : "voiceOff"], UI.B[S.voice ? "voiceOn" : "voiceOff"]);
 }
 
 function cycleSize() {
@@ -401,6 +423,8 @@ async function startListening() {
 
 function pauseListening(st) {
   S.running = false;
+  stopSpeaking();
+  releaseMic();
   for (const p of Object.values(pipes)) closePipe(p);
   stopLicenceClock();
   stopInactivityWatch();
@@ -411,19 +435,18 @@ function pauseListening(st) {
 
 /* ---------- Capture du micro (PCM 16 kHz, comme TalkWithoutBorders) ---------- */
 async function prepareCapture() {
-  if (S.capCtx) { try { await S.capCtx.resume(); } catch (e) {} return; }
+  if (S.capCtx) { try { await S.capCtx.resume(); } catch (e) {} attachMic(); return; }
   const Ctx = window.AudioContext || window.webkitAudioContext;
   let ctx; try { ctx = new Ctx({ sampleRate: IN_RATE }); } catch (e) { ctx = new Ctx(); }
   S.capCtx = ctx;
   try { await ctx.resume(); } catch (e) {}
-  const src = ctx.createMediaStreamSource(S.micStream);
   const proc = ctx.createScriptProcessor(4096, 1, 1);
   S.capProc = proc;
   proc.onaudioprocess = (e) => {
     if (!S.running) return;
     // Pendant que le téléphone PARLE (traduction orale), on n'envoie pas le
     // micro : sinon la machine retraduirait sa propre voix.
-    if (isPlaying()) return;
+    if (speaking) return;
     let data = e.inputBuffer.getChannelData(0);
     if (ctx.sampleRate !== IN_RATE) data = resample(data, ctx.sampleRate, IN_RATE);
     const msg = JSON.stringify({ realtimeInput: { audio: { data: pcm16b64(data), mimeType: "audio/pcm;rate=16000" } } });
@@ -431,9 +454,42 @@ async function prepareCapture() {
       if (p.ws && p.ws.readyState === WebSocket.OPEN) { try { p.ws.send(msg); } catch (err) {} }
     }
   };
-  src.connect(proc);
+  // Analyseur de niveau sonore pour les ondes animées
+  S.analyser = ctx.createAnalyser(); S.analyser.fftSize = 512;
+  animateWaves();
   const mute = ctx.createGain(); mute.gain.value = 0;
   proc.connect(mute); mute.connect(ctx.destination);
+  attachMic();
+}
+
+// Branche le micro sur le découpeur et l'analyseur.
+function attachMic() {
+  if (!S.capCtx || !S.micStream) return;
+  if (S.micSrc) { try { S.micSrc.disconnect(); } catch (e) {} }
+  S.micSrc = S.capCtx.createMediaStreamSource(S.micStream);
+  S.micSrc.connect(S.capProc);
+  S.micSrc.connect(S.analyser);
+}
+
+// Coupe COMPLÈTEMENT le micro (l'iPhone/iPad éteint son voyant orange).
+function releaseMic() {
+  if (S.micSrc) { try { S.micSrc.disconnect(); } catch (e) {} S.micSrc = null; }
+  if (S.micStream) { try { S.micStream.getTracks().forEach((t) => t.stop()); } catch (e) {} S.micStream = null; }
+}
+
+// Rallume le micro (après la lecture à voix haute).
+async function resumeMic() {
+  if (!S.running || S.micStream) return;
+  try {
+    S.micStream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+    });
+    if (!S.running || speaking) { releaseMic(); return; }  // entre-temps : pause ou nouvelle lecture
+    try { await S.capCtx.resume(); } catch (e) {}
+    attachMic();
+  } catch (e) {
+    toast(UI.A.micError, UI.B.micError);
+  }
 }
 function resample(d, from, to) {
   const r = from / to, n = Math.floor(d.length / r), o = new Float32Array(n);
@@ -709,8 +765,7 @@ function onAudio(p, b64) {
 }
 function acceptAudio(b64) {
   if (!current) return;
-  current.audio.push(b64);
-  if (S.voice) playChunk(b64);
+  current.audio.push(b64);   // gardé en secours si la tablette n'a pas de voix pour cette langue
 }
 
 // Gemini signale parfois une fin de phrase : on fige alors la réplique.
@@ -722,7 +777,12 @@ function endPipeTurn(p) {
 
 function finalizeCurrent() {
   if (!current) return;
-  if (current.own || current.trans) { render(current, false); lastFinal = { speaker: current.speaker, own: current.own }; }
+  if (current.own || current.trans) {
+    render(current, false);
+    lastFinal = { speaker: current.speaker, own: current.own };
+    S.history.push(current);
+    if (S.history.length > 60) S.history.shift();
+  }
   current = null;
 }
 
@@ -751,27 +811,169 @@ function render(u, live) {
   if (tr) {
     if (!u["el" + listener]) {
       const el = bubble(listenerFeed, false);
-      const ref = u; el.onclick = () => replay(ref, el);
+      const ref = u; el.onclick = () => replay(ref);
       u["el" + listener] = el;
     }
     u["el" + listener].querySelector(".tx").textContent = tr;
   }
   for (const el of [u.elA, u.elB]) if (el) el.classList.toggle("live", live);
-  if (u.elA && own && u.speaker === "A") u.elA.onclick = () => replay(u, u.elA);
-  if (u.elB && own && u.speaker === "B") u.elB.onclick = () => replay(u, u.elB);
+  if (u.elA && own && u.speaker === "A") u.elA.onclick = () => replay(u);
+  if (u.elB && own && u.speaker === "B") u.elB.onclick = () => replay(u);
   for (const f of [speakerFeed, listenerFeed]) f.scrollTop = f.scrollHeight;
 }
 
-// Toucher un message : on réentend la traduction (utile pour une personne malvoyante).
-function replay(u, el) {
-  if (!u.audio || !u.audio.length) return;
+/* =======================================================================
+   LECTURE À VOIX HAUTE (bouton haut-parleur)
+   Un appui : la tablette lit EN ENTIER la dernière réplique traduite
+   (une ou plusieurs phrases de la même personne), avec la voix de
+   synthèse de l'appareil. Un second appui arrête la lecture.
+   Pendant la lecture, le micro n'envoie rien (pas de retraduction).
+   ======================================================================= */
+const TTS_LANG = {
+  en: "en-US", he: "he-IL", fr: "fr-FR", ar: "ar-SA", es: "es-ES", de: "de-DE", it: "it-IT",
+  ru: "ru-RU", uk: "uk-UA", pl: "pl-PL", nl: "nl-NL", tr: "tr-TR", el: "el-GR", ja: "ja-JP",
+  ko: "ko-KR", "zh-Hans": "zh-CN", "zh-Hant": "zh-TW", "pt-BR": "pt-BR", "pt-PT": "pt-PT",
+  hi: "hi-IN", th: "th-TH", vi: "vi-VN", id: "id-ID", sv: "sv-SE", da: "da-DK", no: "nb-NO",
+  fi: "fi-FI", cs: "cs-CZ", sk: "sk-SK", hu: "hu-HU", ro: "ro-RO", bg: "bg-BG", hr: "hr-HR",
+  fa: "fa-IR", ur: "ur-PK", ms: "ms-MY", ca: "ca-ES",
+};
+let voices = [];
+function loadVoices() { try { voices = window.speechSynthesis ? speechSynthesis.getVoices() : []; } catch (e) {} }
+if (window.speechSynthesis) { loadVoices(); try { speechSynthesis.onvoiceschanged = loadVoices; } catch (e) {} }
+
+function pickVoice(code) {
+  const full = (TTS_LANG[code] || code).toLowerCase();
+  const base = code.split("-")[0].toLowerCase();
+  const norm = (v) => v.lang.replace("_", "-").toLowerCase();
+  const bases = base === "he" ? ["he", "iw"] : [base];   // ancien code de l'hébreu sur Android
+  return voices.find((v) => norm(v) === full)
+      || voices.find((v) => bases.some((b) => norm(v).startsWith(b)))
+      || null;
+}
+
+let speaking = false, speakWatchdog = null, speakToken = 0;
+
+function setSpeaking(on) {
+  speaking = on;
+  document.getElementById("btnVoice").classList.toggle("speaking", on);
+  // Le micro est COUPÉ pendant la lecture, puis rallumé automatiquement.
+  document.getElementById("mic").classList.toggle("reading", on);
+  if (on) releaseMic();
+  else resumeMic();
+  if (!on) document.querySelectorAll(".msg.playing").forEach((m) => m.classList.remove("playing"));
+}
+
+function stopSpeaking() {
+  speakToken++;
+  try { if (window.speechSynthesis) speechSynthesis.cancel(); } catch (e) {}
   stopPlayback();
-  preparePlayback().then(() => {
-    for (const b of u.audio) playChunk(b);
-    el.classList.add("playing");
-    const ms = (S.nextPlay - S.playCtx.currentTime) * 1000;
-    setTimeout(() => el.classList.remove("playing"), Math.max(300, ms));
+  clearTimeout(speakWatchdog);
+  setSpeaking(false);
+}
+
+// Bouton haut-parleur
+function readAloud() {
+  if (speaking) { stopSpeaking(); return; }
+  const list = S.history.slice();
+  if (current && (current.trans || "").trim()) list.push(current);
+  let i = list.length - 1;
+  while (i >= 0 && !(list[i].trans || "").trim()) i--;
+  if (i < 0) return;
+  // On lit toute la dernière intervention de la même personne (une ou plusieurs bulles).
+  const sp = list[i].speaker, group = [];
+  while (i >= 0 && list[i].speaker === sp && group.length < 6) {
+    if ((list[i].trans || "").trim()) group.unshift(list[i]);
+    i--;
+  }
+  speakUtterances(group);
+}
+
+// Toucher une bulle : on lit cette réplique traduite.
+function replay(u) { stopSpeaking(); speakUtterances([u]); }
+
+function speakUtterances(group) {
+  if (!group.length) return;
+  const sp = group[0].speaker;
+  const lang = sp === "A" ? S.B : S.A;                 // la traduction est dans la langue de l'AUTRE
+  const items = group.map((u) => ({ text: u.trans.trim(), el: sp === "A" ? u.elB : u.elA, audio: u.audio || [] }));
+  const voice = pickVoice(lang);
+  const tts = window.speechSynthesis && (voice || !voices.length);
+  if (tts) speakTTS(items, lang, voice);
+  else speakGeminiAudio(items);
+}
+
+function speakTTS(items, lang, voice) {
+  const token = ++speakToken;
+  // (sur iPhone, annuler juste avant de parler peut avaler la phrase : seulement si nécessaire)
+  try { if (speechSynthesis.speaking || speechSynthesis.pending) speechSynthesis.cancel(); } catch (e) {}
+  setSpeaking(true);
+  const phrases = [];
+  for (const it of items) {
+    const parts = it.text.match(/[^.!?؟。]+[.!?؟。]*/g) || [it.text];
+    parts.forEach((t, k) => { if (t.trim()) phrases.push({ t: t.trim(), el: it.el, first: k === 0, last: k === parts.length - 1 }); });
+  }
+  let total = 0;
+  phrases.forEach((ph, idx) => {
+    const u = new SpeechSynthesisUtterance(ph.t);
+    u.lang = TTS_LANG[lang] || lang;
+    if (voice) u.voice = voice;
+    u.rate = 0.95;
+    u.onstart = () => { if (token === speakToken && ph.el) ph.el.classList.add("playing"); };
+    u.onend = () => {
+      if (token !== speakToken) return;
+      if (ph.last && ph.el) ph.el.classList.remove("playing");
+      if (idx === phrases.length - 1) { clearTimeout(speakWatchdog); setSpeaking(false); }
+    };
+    u.onerror = u.onend;
+    total += ph.t.length;
+    speechSynthesis.speak(u);
   });
+  // Sécurité : certains iPhone oublient de signaler la fin de lecture.
+  clearTimeout(speakWatchdog);
+  speakWatchdog = setTimeout(() => { if (token === speakToken) setSpeaking(false); }, 4000 + total * 110);
+}
+
+// Secours : la tablette n'a pas de voix pour cette langue -> on rejoue la voix Gemini enregistrée.
+function speakGeminiAudio(items) {
+  const chunks = items.flatMap((it) => it.audio);
+  if (!chunks.length) return;
+  const token = ++speakToken;
+  setSpeaking(true);
+  preparePlayback().then(() => {
+    for (const it of items) if (it.el) it.el.classList.add("playing");
+    for (const b of chunks) playChunk(b);
+    const ms = (S.nextPlay - S.playCtx.currentTime) * 1000 + 300;
+    clearTimeout(speakWatchdog);
+    speakWatchdog = setTimeout(() => { if (token === speakToken) setSpeaking(false); }, Math.max(500, ms));
+  });
+}
+
+/* Ondes animées autour du micro (niveau sonore réel du micro). */
+function animateWaves() {
+  const L = document.querySelectorAll("#wavesL i"), Rr = document.querySelectorAll("#wavesR i");
+  const shape = [0.45, 0.7, 1, 0.8, 0.55];
+  const buf = new Uint8Array(512);
+  let smooth = 0;
+  const tick = () => {
+    const on = S.running && !speaking;
+    document.getElementById("wavesL").classList.toggle("on", on);
+    document.getElementById("wavesR").classList.toggle("on", on);
+    if (on && S.analyser) {
+      S.analyser.getByteTimeDomainData(buf);
+      let sum = 0;
+      for (let i = 0; i < buf.length; i++) { const v = (buf[i] - 128) / 128; sum += v * v; }
+      const rms = Math.sqrt(sum / buf.length);
+      smooth = smooth * 0.6 + Math.min(1, rms * 6) * 0.4;
+      const t = performance.now() / 180;
+      for (let k = 0; k < 5; k++) {
+        const vivant = 0.18 + 0.12 * Math.sin(t + k);            // petit mouvement même en silence
+        const h = 6 + (innerWidth >= 700 ? 50 : 36) * Math.min(1, (smooth + vivant * 0.35) * shape[k] * 1.4);
+        L[4 - k].style.height = h + "px"; Rr[k].style.height = h + "px";
+      }
+    }
+    requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
 }
 
 /* =======================================================================
