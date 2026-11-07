@@ -7,6 +7,7 @@
 <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png">
 <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
 <link rel="manifest" href="/manifest.webmanifest">
+<script src="https://aka.ms/csspeech/jsbrowserpackageraw"></script>
 <meta name="theme-color" content="#B3124A">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
@@ -180,7 +181,7 @@
      - en BAS : la personne A (le client, langue de l'hôte de la licence)
      - en HAUT, retourné : la personne B en face (langue du participant)
    Chacun parle quand il veut : la langue est reconnue automatiquement.
-   Moteur : traduction en direct GEMINI (même base que TalkWithoutBorders).
+   Moteur : MICROSOFT AZURE SPEECH (reconnaissance + traduction), licences comme TalkWithoutBorders.
    ======================================================================= */
 
 /* ---------- Textes de l'interface (une version par moitié d'écran) ---------- */
@@ -256,8 +257,7 @@ const S = {
   licence: null,
   running: false,          // micro ouvert et traduction active
   micStream: null,
-  capCtx: null, capProc: null,
-  playCtx: null, playGain: null, nextPlay: 0,
+  capCtx: null, analyser: null, micSrc: null,
   history: [],             // les répliques terminées (pour la lecture à voix haute)
   size: 1,
 };
@@ -377,43 +377,57 @@ function toast(a, b) {
 }
 
 /* =======================================================================
-   ÉCOUTE : micro + deux « canaux » de traduction Gemini
-   - canal vers B : traduit ce que dit A (ex : anglais -> hébreu)
-   - canal vers A : traduit ce que dit B (ex : hébreu -> anglais)
-   Le même son du micro part dans les deux. Le canal qui reçoit déjà
-   SA propre langue ne fait que répéter : on l'ignore automatiquement.
-   C'est ce qui permet de reconnaître la langue immédiatement.
+   ÉCOUTE : moteur MICROSOFT AZURE SPEECH (comme l'application WordPress)
+   - un seul flux : Azure reconnaît automatiquement laquelle des DEUX
+     langues est parlée, transcrit (modèle spécialisé, ex : hébreu he-IL)
+     et traduit, phrase par phrase ;
+   - la clé Azure reste sur le serveur (ticket temporaire /api/azure-token) ;
+   - le glossaire de la licence (ex : « ים המלח ») aide la reconnaissance.
    ======================================================================= */
-const IN_RATE = 16000, OUT_RATE = 24000;
-const pipes = {
-  toB: { target: "B", validFor: "A", ws: null, promise: null, timer: null, inT: "", outT: "", inS: 0, outS: 0, held: [], skipEcho: false },
-  toA: { target: "A", validFor: "B", ws: null, promise: null, timer: null, inT: "", outT: "", inS: 0, outS: 0, held: [], skipEcho: false },
+const AZ_REC = {
+  en: "en-US", he: "he-IL", fr: "fr-FR", ar: "ar-SA", es: "es-ES", de: "de-DE", it: "it-IT",
+  ru: "ru-RU", uk: "uk-UA", pl: "pl-PL", nl: "nl-NL", tr: "tr-TR", el: "el-GR", ja: "ja-JP",
+  ko: "ko-KR", "zh-Hans": "zh-CN", "zh-Hant": "zh-TW", "pt-BR": "pt-BR", "pt-PT": "pt-PT",
+  hi: "hi-IN", th: "th-TH", vi: "vi-VN", id: "id-ID", sv: "sv-SE", da: "da-DK", no: "nb-NO",
+  fi: "fi-FI", cs: "cs-CZ", sk: "sk-SK", hu: "hu-HU", ro: "ro-RO", bg: "bg-BG", hr: "hr-HR",
+  fa: "fa-IR", ur: "ur-IN", ms: "ms-MY", ca: "ca-ES", sw: "sw-KE", ta: "ta-IN", te: "te-IN",
+  bn: "bn-IN", gu: "gu-IN", mr: "mr-IN", kn: "kn-IN", ml: "ml-IN", am: "am-ET", hy: "hy-AM",
+  ka: "ka-GE", az: "az-AZ", kk: "kk-KZ", uz: "uz-UZ", sr: "sr-RS", sl: "sl-SI", et: "et-EE",
+  lv: "lv-LV", lt: "lt-LT", mk: "mk-MK", sq: "sq-AL", is: "is-IS", gl: "gl-ES", eu: "eu-ES",
+  fil: "fil-PH", af: "af-ZA", zu: "zu-ZA", km: "km-KH", lo: "lo-LA", my: "my-MM", si: "si-LK",
+  ne: "ne-NP", mn: "mn-MN", jv: "jv-ID", pa: "pa-IN",
 };
+const AZ_TGT = { "pt-BR": "pt", "pt-PT": "pt-pt", no: "nb", "zh-Hans": "zh-Hans", "zh-Hant": "zh-Hant" };
+function recLocale(c) { return AZ_REC[c] || c; }
+function tgtCode(c) { return AZ_TGT[c] || c.split("-")[0]; }
+
+let recognizer = null, azToken = null, azRegion = null, azTokenAt = 0, tokenTimer = null, restartTimer = null;
+
+async function getAzureToken(force) {
+  if (!force && azToken && Date.now() - azTokenAt < 8 * 60 * 1000) return azToken;
+  const r = await fetch("/api/azure-token", { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ code: S.licence && S.licence.code }) });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok || !d.token) throw new Error(d.error || "token refused");
+  azToken = d.token; azRegion = d.region; azTokenAt = Date.now();
+  return azToken;
+}
 
 async function startListening() {
-  if (S.running) return;
-  if (!S.licence) return;
+  if (S.running || !S.licence) return;
+  if (typeof SpeechSDK === "undefined") { toast("Speech engine not loaded — check the connection", ""); return; }
   setStatus("connecting");
   unlockAudio();
-  try {
-    if (!S.micStream) {
-      S.micStream = await navigator.mediaDevices.getUserMedia({
-        audio: true,   // réglages normaux de l'iPhone, comme TalkWithoutBorders (sans filtres qui écrasent les voyelles)
-      });
-    }
-  } catch (e) {
-    setStatus("idle");
-    toast(UI.A.micError, UI.B.micError);
-    return;
-  }
-  await preparePlayback();
-  await prepareCapture();
   S.running = true;
   try {
-    await Promise.all([ensurePipe(pipes.toB), ensurePipe(pipes.toA)]);
+    await startRecognizer();
     if (S.running) setStatus("listening");
   } catch (e) {
-    if (S.running) { setStatus("retrying"); scheduleRebuild(pipes.toB); scheduleRebuild(pipes.toA); }
+    S.running = false;
+    releaseMic();
+    setStatus("idle");
+    toast(/micro|permission|NotAllowed/i.test(String(e && (e.name || e.message))) ? UI.A.micError : ("⚠️ " + (e.message || e)), "");
+    return;
   }
   startLicenceClock();
   noteActivity();
@@ -423,9 +437,10 @@ async function startListening() {
 
 function pauseListening(st) {
   S.running = false;
+  clearTimeout(restartTimer);
   stopSpeaking();
+  stopRecognizer();
   releaseMic();
-  for (const p of Object.values(pipes)) closePipe(p);
   stopLicenceClock();
   stopInactivityWatch();
   keepScreenOn(false);
@@ -433,204 +448,116 @@ function pauseListening(st) {
   setStatus(st || "paused");
 }
 
-/* ---------- Capture du micro (PCM 16 kHz, comme TalkWithoutBorders) ---------- */
-async function prepareCapture() {
-  if (S.capCtx) { try { await S.capCtx.resume(); } catch (e) {} attachMic(); return; }
-  const Ctx = window.AudioContext || window.webkitAudioContext;
-  let ctx; try { ctx = new Ctx({ sampleRate: IN_RATE }); } catch (e) { ctx = new Ctx(); }
-  S.capCtx = ctx;
-  try { await ctx.resume(); } catch (e) {}
-  const proc = ctx.createScriptProcessor(4096, 1, 1);
-  S.capProc = proc;
-  proc.onaudioprocess = (e) => {
-    if (!S.running) return;
-    // Pendant que le téléphone PARLE (traduction orale), on n'envoie pas le
-    // micro : sinon la machine retraduirait sa propre voix.
-    if (speaking) return;
-    let data = e.inputBuffer.getChannelData(0);
-    if (ctx.sampleRate !== IN_RATE) data = resample(data, ctx.sampleRate, IN_RATE);
-    const msg = JSON.stringify({ realtimeInput: { audio: { data: pcm16b64(data), mimeType: "audio/pcm;rate=16000" } } });
-    for (const p of Object.values(pipes)) {
-      if (p.ws && p.ws.readyState === WebSocket.OPEN) { try { p.ws.send(msg); } catch (err) {} }
-    }
+async function startRecognizer() {
+  if (recognizer) return;
+  if (!S.micStream) S.micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  await prepareCapture();
+  const token = await getAzureToken();
+  if (!S.running || speaking) { releaseMic(); return; }
+
+  const cfg = SpeechSDK.SpeechTranslationConfig.fromAuthorizationToken(token, azRegion);
+  cfg.speechRecognitionLanguage = recLocale(S.A);
+  cfg.addTargetLanguage(tgtCode(S.A));
+  cfg.addTargetLanguage(tgtCode(S.B));
+  try { cfg.setProperty(SpeechSDK.PropertyId.SpeechServiceConnection_LanguageIdMode, "Continuous"); } catch (e) {}
+  const auto = SpeechSDK.AutoDetectSourceLanguageConfig.fromLanguages([recLocale(S.A), recLocale(S.B)]);
+  const audio = SpeechSDK.AudioConfig.fromStreamInput(S.micStream);
+  const r = (typeof SpeechSDK.TranslationRecognizer.FromConfig === "function")
+    ? SpeechSDK.TranslationRecognizer.FromConfig(cfg, auto, audio)
+    : new SpeechSDK.TranslationRecognizer(cfg, auto, audio);
+
+  // Glossaire de la licence : mots et expressions à bien reconnaître.
+  try {
+    const terms = (S.licence.glossaire || []).filter(Boolean);
+    if (terms.length) { const pl = SpeechSDK.PhraseListGrammar.fromRecognizer(r); terms.forEach((t) => pl.addPhrase(t)); }
+  } catch (e) {}
+
+  r.recognizing = (s, e) => { if (recognizer === r) onAzure(e.result, false); };
+  r.recognized = (s, e) => {
+    if (recognizer !== r) return;
+    if (e.result && e.result.reason === SpeechSDK.ResultReason.TranslatedSpeech) onAzure(e.result, true);
   };
-  // Analyseur de niveau sonore pour les ondes animées
-  S.analyser = ctx.createAnalyser(); S.analyser.fftSize = 512;
-  animateWaves();
-  const mute = ctx.createGain(); mute.gain.value = 0;
-  proc.connect(mute); mute.connect(ctx.destination);
-  attachMic();
+  r.canceled = (s, e) => {
+    if (recognizer !== r) return;
+    recognizer = null;
+    try { r.close(); } catch (x) {}
+    if (!S.running) return;
+    setStatus("retrying");
+    clearTimeout(restartTimer);
+    restartTimer = setTimeout(retryRecognizer, 1500);
+  };
+  recognizer = r;
+  await new Promise((res, rej) => r.startContinuousRecognitionAsync(res, (err) => { recognizer = null; rej(new Error(err)); }));
+
+  // Le ticket Azure dure 10 minutes : on le renouvelle toutes les 8 minutes.
+  clearInterval(tokenTimer);
+  tokenTimer = setInterval(async () => {
+    try { const t = await getAzureToken(true); if (recognizer) recognizer.authorizationToken = t; } catch (e) {}
+  }, 8 * 60 * 1000);
 }
 
-// Branche le micro sur le découpeur et l'analyseur.
+function retryRecognizer() {
+  if (!S.running || speaking || recognizer) return;
+  startRecognizer()
+    .then(() => { if (S.running && recognizer) setStatus("listening"); })
+    .catch(() => { clearTimeout(restartTimer); restartTimer = setTimeout(retryRecognizer, 3000); });
+}
+
+function stopRecognizer() {
+  clearInterval(tokenTimer);
+  const r = recognizer;
+  recognizer = null;
+  if (!r) return Promise.resolve();
+  return new Promise((res) => {
+    const fin = () => { try { r.close(); } catch (e) {} res(); };
+    try { r.stopContinuousRecognitionAsync(fin, fin); } catch (e) { fin(); }
+  });
+}
+
+/* ---------- Micro : ondes animées + coupure complète pendant la lecture ---------- */
+async function prepareCapture() {
+  if (!S.capCtx) {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    S.capCtx = new Ctx();
+    S.analyser = S.capCtx.createAnalyser(); S.analyser.fftSize = 512;
+    animateWaves();
+  }
+  try { await S.capCtx.resume(); } catch (e) {}
+  attachMic();
+}
 function attachMic() {
   if (!S.capCtx || !S.micStream) return;
   if (S.micSrc) { try { S.micSrc.disconnect(); } catch (e) {} }
   S.micSrc = S.capCtx.createMediaStreamSource(S.micStream);
-  S.micSrc.connect(S.capProc);
   S.micSrc.connect(S.analyser);
 }
-
-// Coupe COMPLÈTEMENT le micro (l'iPhone/iPad éteint son voyant orange).
 function releaseMic() {
   if (S.micSrc) { try { S.micSrc.disconnect(); } catch (e) {} S.micSrc = null; }
   if (S.micStream) { try { S.micStream.getTracks().forEach((t) => t.stop()); } catch (e) {} S.micStream = null; }
 }
-
-// Rallume le micro (après la lecture à voix haute).
-async function resumeMic() {
-  if (!S.running || S.micStream) return;
-  try {
-    S.micStream = await navigator.mediaDevices.getUserMedia({
-      audio: true,   // réglages normaux de l'iPhone, comme TalkWithoutBorders (sans filtres qui écrasent les voyelles)
-    });
-    if (!S.running || speaking) { releaseMic(); return; }  // entre-temps : pause ou nouvelle lecture
-    try { await S.capCtx.resume(); } catch (e) {}
-    attachMic();
-  } catch (e) {
-    toast(UI.A.micError, UI.B.micError);
-  }
+// Coupe tout pendant la lecture à voix haute (le micro n'entend pas la tablette).
+function muteForReading() {
+  clearTimeout(restartTimer);
+  stopRecognizer();
+  releaseMic();
 }
-function resample(d, from, to) {
-  const r = from / to, n = Math.floor(d.length / r), o = new Float32Array(n);
-  for (let i = 0; i < n; i++) o[i] = d[Math.floor(i * r)] || 0;
-  return o;
-}
-function pcm16b64(f) {
-  const b = new ArrayBuffer(f.length * 2), v = new DataView(b);
-  for (let i = 0; i < f.length; i++) { const s = Math.max(-1, Math.min(1, f[i])); v.setInt16(i * 2, s < 0 ? s * 0x8000 : s * 0x7FFF, true); }
-  const u = new Uint8Array(b); let s = "";
-  for (let i = 0; i < u.length; i++) s += String.fromCharCode(u[i]);
-  return btoa(s);
+// Après la lecture : on rallume le micro et la reconnaissance.
+function resumeMic() {
+  if (!S.running || speaking || recognizer) return;
+  startRecognizer()
+    .then(() => { if (S.running && recognizer) setStatus("listening"); })
+    .catch(() => { setStatus("retrying"); clearTimeout(restartTimer); restartTimer = setTimeout(retryRecognizer, 2000); });
 }
 
-/* ---------- Haut-parleur (voix traduite, PCM 24 kHz) ---------- */
 let audioUnlocked = false;
 function unlockAudio() {
   if (audioUnlocked) return;
   try { const a = new Audio(); a.play().catch(() => {}); audioUnlocked = true; } catch (e) {}
 }
-async function preparePlayback() {
-  if (!S.playCtx) {
-    const Ctx = window.AudioContext || window.webkitAudioContext;
-    let ctx; try { ctx = new Ctx({ sampleRate: OUT_RATE }); } catch (e) { ctx = new Ctx(); }
-    S.playCtx = ctx;
-    S.playGain = ctx.createGain(); S.playGain.gain.value = 1; S.playGain.connect(ctx.destination);
-    // Petit bip silencieux : réveille le son sur iPhone
-    const b = ctx.createBuffer(1, 1, OUT_RATE); const s = ctx.createBufferSource(); s.buffer = b; s.connect(ctx.destination); s.start();
-  }
-  try { await S.playCtx.resume(); } catch (e) {}
-}
-let playingNodes = [];
-function playChunk(b64) {
-  const ctx = S.playCtx; if (!ctx) return;
-  const bin = atob(b64), u = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
-  const i16 = new Int16Array(u.buffer, 0, Math.floor(u.length / 2)); if (!i16.length) return;
-  const f = new Float32Array(i16.length); for (let i = 0; i < i16.length; i++) f[i] = i16[i] / 32768;
-  const buf = ctx.createBuffer(1, f.length, OUT_RATE); buf.getChannelData(0).set(f);
-  const n = ctx.createBufferSource(); n.buffer = buf; n.connect(S.playGain);
-  const now = ctx.currentTime;
-  if (S.nextPlay < now + 0.05) S.nextPlay = now + 0.05;
-  n.start(S.nextPlay); S.nextPlay += buf.duration;
-  playingNodes.push(n);
-  n.onended = () => { playingNodes = playingNodes.filter((x) => x !== n); };
-}
-function isPlaying() { return S.playCtx && S.playCtx.currentTime < S.nextPlay + 0.3; }
-function stopPlayback() {
-  for (const n of playingNodes) { try { n.stop(); } catch (e) {} }
-  playingNodes = []; if (S.playCtx) S.nextPlay = S.playCtx.currentTime;
-  document.querySelectorAll(".msg.playing").forEach((m) => m.classList.remove("playing"));
-}
 
 /* =======================================================================
-   CANAUX GEMINI (même méthode de connexion que TalkWithoutBorders)
-   ======================================================================= */
-function ensurePipe(p) {
-  if (p.ws && p.ws.readyState === WebSocket.OPEN) return Promise.resolve();
-  if (!p.promise) p.promise = openPipe(p).catch((e) => { p.promise = null; throw e; });
-  return p.promise;
-}
-function closePipe(p) {
-  if (p.timer) { clearTimeout(p.timer); p.timer = null; }
-  if (p.ws) { const w = p.ws; p.ws = null; try { w.onclose = null; w.close(); } catch (e) {} }
-  p.promise = null; p.inT = ""; p.outT = ""; p.inS = 0; p.outS = 0; p.held = []; p.skipEcho = false;
-}
-function scheduleRebuild(p) {
-  if (!S.running || p.timer) return;
-  p.timer = setTimeout(() => {
-    p.timer = null;
-    ensurePipe(p).then(() => { if (S.running && pipes.toA.ws && pipes.toB.ws) setStatus("listening"); })
-                 .catch(() => scheduleRebuild(p));
-  }, 1500);
-}
-
-async function openPipe(p) {
-  const portes = [
-    { version: "v1beta",  methode: "BidiGenerateContentConstrained", auth: "access_token" },
-    { version: "v1alpha", methode: "BidiGenerateContentConstrained", auth: "access_token" },
-    { version: "v1beta",  methode: "BidiGenerateContent",            auth: "key" },
-  ];
-  const formes = [
-    (t) => ({ generationConfig: { responseModalities: ["AUDIO"], inputAudioTranscription: {}, outputAudioTranscription: {}, translationConfig: { targetLanguageCode: t } } }),
-    (t) => ({ generationConfig: { responseModalities: ["AUDIO"], translationConfig: { targetLanguageCode: t } }, inputAudioTranscription: {}, outputAudioTranscription: {} }),
-    (t) => ({ generationConfig: { responseModalities: ["AUDIO"], translationConfig: { targetLanguageCode: t } } }),
-  ];
-  let last = "";
-  for (const porte of portes) for (const forme of formes) {
-    if (!S.running) throw new Error("stopped");
-    try {
-      const session = await getTicket(S[p.target]);
-      await connectPipe(p, session, porte, forme(session.target));
-      return;
-    } catch (e) { last = e && e.message ? e.message : String(e); }
-  }
-  throw new Error("Translation engine refused — " + last);
-}
-
-async function getTicket(target) {
-  const r = await fetch("/api/rt-session", { method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ targetLanguage: target }) });
-  const d = await r.json();
-  if (!r.ok) throw new Error(d.error || "session refused");
-  return d;
-}
-
-function connectPipe(p, session, porte, setupBody) {
-  return new Promise((resolve, reject) => {
-    const url = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage." +
-      porte.version + ".GenerativeService." + porte.methode + "?" + porte.auth + "=" + encodeURIComponent(session.token);
-    const ws = new WebSocket(url);
-    let ready = false;
-    ws.onopen = () => ws.send(JSON.stringify({ setup: Object.assign({ model: session.model }, setupBody) }));
-    ws.onmessage = async (evt) => {
-      let msg;
-      try { msg = JSON.parse(evt.data instanceof Blob ? await evt.data.text() : evt.data); } catch (e) { return; }
-      if (msg.setupComplete) { ready = true; p.ws = ws; resolve(); return; }
-      const c = msg.serverContent; if (!c) return;
-      if (c.inputTranscription && c.inputTranscription.text) { noteActivity(); onInputDelta(p, c.inputTranscription.text); }
-      if (c.outputTranscription && c.outputTranscription.text) { noteActivity(); onOutputDelta(p, c.outputTranscription.text); }
-      const parts = (c.modelTurn && c.modelTurn.parts) || [];
-      for (const part of parts) if (part.inlineData && part.inlineData.data) onAudio(p, part.inlineData.data);
-      if (c.turnComplete || c.generationComplete) endPipeTurn(p);
-    };
-    ws.onclose = (evt) => {
-      if (!ready) { reject(new Error((evt && evt.reason) || ("code " + (evt && evt.code)))); return; }
-      if (p.ws !== ws) return;
-      p.ws = null; p.promise = null;
-      if (S.running) { setStatus("retrying"); scheduleRebuild(p); }
-    };
-    setTimeout(() => { if (!ready) { try { ws.close(); } catch (e) {} reject(new Error("timed out")); } }, 8000);
-  });
-}
-
-/* =======================================================================
-   QUI PARLE ? (reconnaissance immédiate de la langue)
-   1) Si les deux langues ont des alphabets différents (anglais / hébreu),
-      on regarde simplement l'alphabet de ce qui a été entendu.
-   2) Sinon (ex : anglais / français), le canal qui reçoit sa propre langue
-      ne fait que répéter : celui dont la sortie RESSEMBLE à l'entrée
-      trahit la langue parlée.
+   QUI PARLE ? Azure le dit directement (langue détectée : ex. « he-IL »).
+   En secours, l'alphabet du texte (hébreu / latin…) départage.
    ======================================================================= */
 const SCRIPTS = {
   he: "Hebrew", ar: "Arabic", fa: "Arabic", ur: "Arabic", sd: "Arabic",
@@ -643,143 +570,62 @@ const SCRIPTS = {
 function scriptOf(lang) { return SCRIPTS[lang.split("-")[0]] || "Latin"; }
 function countScript(text, script) {
   let re;
-  try {
-    re = script === "Hiragana" ? /[\p{Script=Hiragana}\p{Script=Katakana}]/gu : new RegExp("\\p{Script=" + script + "}", "gu");
-  } catch (e) { return 0; }
+  try { re = script === "Hiragana" ? /[\p{Script=Hiragana}\p{Script=Katakana}]/gu : new RegExp("\\p{Script=" + script + "}", "gu"); }
+  catch (e) { return 0; }
   return (text.match(re) || []).length;
 }
-function words(t) { return new Set(t.toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, " ").split(/\s+/).filter(Boolean)); }
-function similarity(a, b) {
-  const A = words(a), B = words(b); if (!A.size || !B.size) return 0;
-  let k = 0; for (const w of A) if (B.has(w)) k++;
-  return k / Math.min(A.size, B.size);
-}
-/* Le texte entendu arrive en un seul flux continu (Gemini ne signale pas
-   toujours la fin des phrases). On découpe donc ce flux en « répliques » :
-   chaque canal garde un repère (inS / outS) qui marque le début de la
-   réplique en cours. */
-function master() { return (pipes.toB.ws || !pipes.toA.ws) ? pipes.toB : pipes.toA; }
-function validPipe(sp) { return sp === "A" ? pipes.toB : pipes.toA; }
-function segIn() { const m = master(); return m.inT.slice(m.inS); }
-function segOut(p) { return p.outT.slice(p.outS); }
-const differentScripts = () => scriptOf(S.A) !== scriptOf(S.B);
-
-// Langue d'un petit morceau de texte, d'après son alphabet (A, B ou inconnu).
-function langOfChunk(t) {
-  if (!differentScripts()) return null;
-  const a = countScript(t, scriptOf(S.A)), b = countScript(t, scriptOf(S.B));
-  if (a + b < 2) return null;            // ponctuation, une seule lettre : on ne décide pas
-  return b > a ? "B" : "A";
-}
-
-// Qui parle au début d'une nouvelle réplique ?
-function detectSpeaker() {
-  const input = segIn();
-  if (!input.trim()) return null;
-  const parLAlphabet = langOfChunk(input);
-  if (parLAlphabet) return parLAlphabet;
-  // Même alphabet (ex : anglais / français) : le canal qui répète trahit la langue.
-  const oB = segOut(pipes.toB), oA = segOut(pipes.toA);
-  if (oB.trim() && oA.trim()) return similarity(input, oB) > similarity(input, oA) ? "B" : "A";
-  if (oB.trim()) { const s = similarity(input, oB); if (s >= 0.6) return "B"; if (s < 0.25 && words(oB).size >= 3) return "A"; }
-  if (oA.trim()) { const s = similarity(input, oA); if (s >= 0.6) return "A"; if (s < 0.25 && words(oA).size >= 3) return "B"; }
-  return null;
-}
-
-let current = null;     // la réplique en cours { speaker, own, trans, audio[], elA, elB }
-let lastFinal = null;   // la réplique précédente (pour reconnaître les « échos »)
-
-function newUtterance(sp) {
-  const v = validPipe(sp);
-  for (const q of Object.values(pipes)) q.held = [];
-  // Changement de personne : le canal qui va traduire peut encore « finir »
-  // de répéter la réplique précédente pendant 1 à 2 secondes. On l'ignore.
-  if (lastFinal && lastFinal.speaker !== sp && lastFinal.own) {
-    v.skipEcho = true;
-    v.echoUntil = Date.now() + 2500;
-    v.echoText = normalise(lastFinal.own);
+function speakerOf(detected, text) {
+  const d = String(detected || "").toLowerCase().split("-")[0];
+  const a = S.A.toLowerCase().split("-")[0], b = S.B.toLowerCase().split("-")[0];
+  if (d && d === b) return "B";
+  if (d && d === a) return "A";
+  if (scriptOf(S.A) !== scriptOf(S.B) && text) {
+    const na = countScript(text, scriptOf(S.A)), nb = countScript(text, scriptOf(S.B));
+    if (na + nb >= 2) return nb > na ? "B" : "A";
   }
-  current = { speaker: sp, own: "", trans: "", audio: [], elA: null, elB: null };
+  return current ? current.speaker : null;
 }
-function normalise(t) { return t.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim(); }
 
-// Nouveau morceau de ce qui est ENTENDU (transcription de la voix).
-function onInputDelta(p, t) {
-  const avant = p.inT.length;
-  p.inT += t;
-  if (p !== master()) return;              // un seul canal sert de référence
-  const lang = langOfChunk(t);
-  if (lang && current && current.speaker !== lang) {
-    // L'autre personne vient de prendre la parole : on coupe ICI.
-    cutHere(avant);
-    newUtterance(lang);
-  } else if (!differentScripts() && current) {
-    const sp = detectSpeaker();
-    if (sp && sp !== current.speaker) { cutHere(p.inS); newUtterance(sp); }
+/* =======================================================================
+   AFFICHAGE : chaque phrase apparaît dans les deux moitiés
+   - chez celui qui parle : sa propre phrase (pour contrôler)
+   - chez l'autre : la traduction, en grand
+   ======================================================================= */
+let current = null;   // la phrase en cours { speaker, own, trans, elA, elB }
+
+function onAzure(result, final) {
+  if (!result) return;
+  let detected = result.language || "";      // ex : « he-IL » ou « en-US »
+  if (!detected) { try { detected = SpeechSDK.AutoDetectSourceLanguageResult.fromResult(result).language || ""; } catch (e) {} }
+  const own = (result.text || "").trim();
+  const sp = speakerOf(detected, own);
+  if (!sp) return;
+  const other = sp === "A" ? S.B : S.A;
+  let tr = "";
+  try {
+    const T = result.translations, want = tgtCode(other).toLowerCase();
+    tr = (T && T.get(tgtCode(other))) || "";
+    if (!tr && T && T.languages) for (const k of T.languages) if (String(k).toLowerCase() === want) tr = T.get(k) || "";
+  } catch (e) {}
+  if (!own && !tr) return;
+  noteActivity();
+  // Pendant la phrase, Azure peut corriger la langue détectée : on déplace la bulle.
+  if (current && current.speaker !== sp) {
+    if (current.elA) current.elA.remove();
+    if (current.elB) current.elB.remove();
+    current = null;
   }
-  route();
-}
-
-// Nouveau morceau de TRADUCTION.
-function onOutputDelta(p, t) {
-  p.outT += t;
-  if (p.skipEcho) {
-    const piece = normalise(t);
-    if (Date.now() < p.echoUntil && (!piece || p.echoText.includes(piece))) {
-      p.outS = p.outT.length;              // fin d'écho de la réplique précédente : ignorée
-      return;
-    }
-    p.skipEcho = false;
-  }
-  route();
-}
-
-// Termine la réplique en cours et place les repères des canaux au point de coupe.
-function cutHere(coupeEntree) {
-  finalizeCurrent();
-  for (const q of Object.values(pipes)) { q.inS = q.inT.length; q.outS = q.outT.length; }
-  if (coupeEntree != null) master().inS = coupeEntree;
-}
-
-function route() {
-  if (!current) {
-    const sp = detectSpeaker();
-    if (!sp) return;
-    newUtterance(sp);
-  }
-  const v = validPipe(current.speaker);
-  for (const b64 of v.held) acceptAudio(b64);
-  v.held = [];
-  current.own = segIn();
-  current.trans = segOut(v);
-  render(current, true);
-  // Très longue réplique : on la fige à la fin d'une phrase pour garder l'écran lisible.
-  if (current.own.length > 260 && /[.!?。؟]\s*$/.test(current.own) && current.trans.trim()) cutHere();
-}
-
-function onAudio(p, b64) {
-  if (p.skipEcho && Date.now() < p.echoUntil) return;   // voix « écho » : jetée
-  if (current && p.validFor === current.speaker) { acceptAudio(b64); return; }
-  p.held.push(b64);
-  if (p.held.length > 400) p.held.shift();
-}
-function acceptAudio(b64) {
-  if (!current) return;
-  current.audio.push(b64);   // gardé en secours si la tablette n'a pas de voix pour cette langue
-}
-
-// Gemini signale parfois une fin de phrase : on fige alors la réplique.
-function endPipeTurn(p) {
-  route();
-  if (current && p === validPipe(current.speaker) && (current.own || current.trans)) cutHere();
-  else p.held = [];
+  if (!current) current = { speaker: sp, own: "", trans: "", elA: null, elB: null };
+  current.own = own;
+  if (tr) current.trans = tr;
+  render(current, !final);
+  if (final) finalizeCurrent();
 }
 
 function finalizeCurrent() {
   if (!current) return;
   if (current.own || current.trans) {
     render(current, false);
-    lastFinal = { speaker: current.speaker, own: current.own };
     S.history.push(current);
     if (S.history.length > 60) S.history.shift();
   }
@@ -858,7 +704,7 @@ function setSpeaking(on) {
   document.getElementById("btnVoice").classList.toggle("speaking", on);
   // Le micro est COUPÉ pendant la lecture, puis rallumé automatiquement.
   document.getElementById("mic").classList.toggle("reading", on);
-  if (on) releaseMic();
+  if (on) muteForReading();
   else resumeMic();
   if (!on) document.querySelectorAll(".msg.playing").forEach((m) => m.classList.remove("playing"));
 }
@@ -866,7 +712,6 @@ function setSpeaking(on) {
 function stopSpeaking() {
   speakToken++;
   try { if (window.speechSynthesis) speechSynthesis.cancel(); } catch (e) {}
-  stopPlayback();
   clearTimeout(speakWatchdog);
   setSpeaking(false);
 }
@@ -895,11 +740,9 @@ function speakUtterances(group) {
   if (!group.length) return;
   const sp = group[0].speaker;
   const lang = sp === "A" ? S.B : S.A;                 // la traduction est dans la langue de l'AUTRE
-  const items = group.map((u) => ({ text: u.trans.trim(), el: sp === "A" ? u.elB : u.elA, audio: u.audio || [] }));
-  const voice = pickVoice(lang);
-  const tts = window.speechSynthesis && (voice || !voices.length);
-  if (tts) speakTTS(items, lang, voice);
-  else speakGeminiAudio(items);
+  const items = group.map((u) => ({ text: u.trans.trim(), el: sp === "A" ? u.elB : u.elA }));
+  if (!window.speechSynthesis) return;
+  speakTTS(items, lang, pickVoice(lang));
 }
 
 function speakTTS(items, lang, voice) {
@@ -931,21 +774,6 @@ function speakTTS(items, lang, voice) {
   // Sécurité : certains iPhone oublient de signaler la fin de lecture.
   clearTimeout(speakWatchdog);
   speakWatchdog = setTimeout(() => { if (token === speakToken) setSpeaking(false); }, 4000 + total * 110);
-}
-
-// Secours : la tablette n'a pas de voix pour cette langue -> on rejoue la voix Gemini enregistrée.
-function speakGeminiAudio(items) {
-  const chunks = items.flatMap((it) => it.audio);
-  if (!chunks.length) return;
-  const token = ++speakToken;
-  setSpeaking(true);
-  preparePlayback().then(() => {
-    for (const it of items) if (it.el) it.el.classList.add("playing");
-    for (const b of chunks) playChunk(b);
-    const ms = (S.nextPlay - S.playCtx.currentTime) * 1000 + 300;
-    clearTimeout(speakWatchdog);
-    speakWatchdog = setTimeout(() => { if (token === speakToken) setSpeaking(false); }, Math.max(500, ms));
-  });
 }
 
 /* Ondes animées autour du micro (niveau sonore réel du micro). */

@@ -34,7 +34,7 @@ exports.handler = async (event) => {
 
   // Le mot de passe n'est exige que pour les actions d'ADMINISTRATION.
   // "verify" et "use" sont appelees par le site cote client (avec le code licence).
-  const actionsAdmin = ["list", "create", "delete"];
+  const actionsAdmin = ["list", "create", "delete", "glossary"];
   if (actionsAdmin.includes(action)) {
     if (String(body.password || "") !== String(adminPassword)) {
       return json(401, { error: "Wrong password." });
@@ -76,6 +76,7 @@ exports.handler = async (event) => {
         return json(400, { error: "The two languages must be different." });
       }
 
+      const glossaire = nettoyerGlossaire(body.glossaire);
       const code = genererCode();
       const licence = {
         code,
@@ -85,6 +86,7 @@ exports.handler = async (event) => {
         expiration,          // AAAA-MM-JJ
         langueHote,          // langue parlee par le client (ex: "fr")
         langueInvite,        // langue parlee par son interlocuteur (ex: "en")
+        glossaire,           // mots et expressions a bien reconnaitre (ex: "ים המלח")
         creeLe: new Date().toISOString(),
       };
 
@@ -96,6 +98,20 @@ exports.handler = async (event) => {
       if (!r.ok) return json(502, { error: "Firebase refused the write." });
       const { name: id } = await r.json();
       return json(200, { ok: true, licence: { id, ...licence } });
+    }
+
+    // ----- MODIFIER le glossaire d'une licence -----
+    if (action === "glossary") {
+      const id = String(body.id || "").trim();
+      if (!id || /[.#$\[\]\/]/.test(id)) return json(400, { error: "Invalid id." });
+      const glossaire = nettoyerGlossaire(body.glossaire);
+      const r = await fetch(`${base}/${id}.json`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ glossaire }),
+      });
+      if (!r.ok) return json(502, { error: "Firebase refused the update." });
+      return json(200, { ok: true, glossaire });
     }
 
     // ----- SUPPRIMER une licence -----
@@ -121,6 +137,7 @@ exports.handler = async (event) => {
           expiration: licence.expiration,
           langueHote: licence.langueHote || "en",
           langueInvite: licence.langueInvite || "he",
+          glossaire: Array.isArray(licence.glossaire) ? licence.glossaire : [],
         },
       });
     }
@@ -190,6 +207,19 @@ async function trouverLicence(base, codeRecu) {
 
   licence.heuresRestantes = restantes;
   return { id, licence };
+}
+
+// Glossaire : liste de mots/expressions (une par ligne), 300 au maximum.
+function nettoyerGlossaire(entree) {
+  const liste = Array.isArray(entree) ? entree : String(entree || "").split(/[\n;]+/);
+  const vus = new Set();
+  const propre = [];
+  for (const t of liste) {
+    const m = String(t || "").trim().slice(0, 80);
+    if (m && !vus.has(m)) { vus.add(m); propre.push(m); }
+    if (propre.length >= 300) break;
+  }
+  return propre;
 }
 
 // Genere un code de licence lisible, du type LICHI-7K3M-Q9X2

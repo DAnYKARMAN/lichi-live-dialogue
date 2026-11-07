@@ -132,6 +132,8 @@
           <select id="langueInvite"></select>
         </div>
       </div>
+      <label for="glossaire">Glossary (optional) — one word or expression per line, e.g. ים המלח · Dead Sea · names of people, places, products</label>
+      <textarea id="glossaire" rows="4" style="width:100%;border-radius:12px;padding:14px;font-size:1rem;background:#0c0f22;color:var(--text);border:1px solid rgba(255,255,255,.08);font-family:inherit" dir="auto"></textarea>
       <button class="vert" id="btnCreer">Create license</button>
       <div class="msg" id="msgCreer"></div>
     </div>
@@ -268,7 +270,8 @@
     appel({
       action: "create", client: client, heures: heures, expiration: expiration,
       langueHote: $("langueHote").value,
-      langueInvite: $("langueInvite").value
+      langueInvite: $("langueInvite").value,
+      glossaire: $("glossaire").value
     })
       .then(function(res){
         $("btnCreer").disabled = false;
@@ -297,7 +300,7 @@
         bloc.appendChild(btnCopieLien);
         montrer($("msgCreer"), bloc, "ok");
 
-        $("client").value = ""; $("heures").value = ""; $("expiration").value = "";
+        $("client").value = ""; $("heures").value = ""; $("expiration").value = ""; $("glossaire").value = "";
         recharger();
       })
       .catch(function(){
@@ -372,6 +375,20 @@
         });
       });
       tdAct.appendChild(btnCopier);
+
+      var btnGloss = document.createElement("button");
+      var nbTermes = (lic.glossaire || []).length;
+      btnGloss.className = "mini"; btnGloss.textContent = "Glossary (" + nbTermes + ")";
+      btnGloss.addEventListener("click", function(){
+        var actuel = (lic.glossaire || []).join(" ; ");
+        var nouveau = prompt("Glossary for " + (lic.client || lic.code) + "\nSeparate words or expressions with ;", actuel);
+        if (nouveau === null) return;
+        appel({ action: "glossary", id: lic.id, glossaire: nouveau }).then(function(res){
+          if (res.ok) recharger();
+          else alert(res.data.error || "Error while saving the glossary.");
+        });
+      });
+      tdAct.appendChild(btnGloss);
 
       var btnSuppr = document.createElement("button");
       btnSuppr.className = "mini danger"; btnSuppr.textContent = "Delete";
