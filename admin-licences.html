@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex, nofollow">
+<title>Lichi Live – Dialogue — License management</title>
+<link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png">
+<style>
+  :root{
+    --bg:#0f1226;
+    --card:#1a1f3d;
+    --fr:#2563eb;
+    --en:#dc2626;
+    --on:#16a34a;
+    --text:#f5f6ff;
+    --muted:#9aa0c7;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;min-height:100%}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    background:radial-gradient(1200px 800px at 50% -10%, #232a52 0%, var(--bg) 60%);
+    color:var(--text);
+    padding:24px 16px 60px;
+  }
+  .wrap{max-width:860px;margin:0 auto}
+  h1{font-size:1.9rem;text-align:center;margin:16px 0 4px;font-weight:800;letter-spacing:-.02em}
+  .sub{text-align:center;color:var(--muted);margin:0 0 26px;font-size:1rem}
+
+  .card{
+    background:linear-gradient(180deg, rgba(26,31,61,.9), rgba(15,18,38,.85));
+    border:1px solid rgba(255,255,255,.08);
+    border-radius:20px;padding:22px;margin-bottom:22px;
+  }
+  .card h2{margin:0 0 14px;font-size:1.15rem}
+
+  label{display:block;color:var(--muted);font-size:.9rem;margin:12px 0 6px}
+  input{
+    width:100%;border:none;border-radius:12px;padding:14px;font-size:1rem;
+    background:#0c0f22;color:var(--text);border:1px solid rgba(255,255,255,.08);
+  }
+  input:focus{outline:2px solid var(--fr)}
+  input[type="date"]{color-scheme:dark}
+  select{
+    width:100%;border:none;border-radius:12px;padding:14px;font-size:1rem;
+    background:#0c0f22;color:var(--text);border:1px solid rgba(255,255,255,.08);
+    appearance:auto;color-scheme:dark;
+  }
+  select:focus{outline:2px solid var(--fr)}
+
+  .row{display:flex;gap:12px;flex-wrap:wrap}
+  .row > div{flex:1;min-width:160px}
+
+  button{
+    border:none;border-radius:14px;padding:15px 22px;font-size:1rem;font-weight:700;
+    color:#fff;cursor:pointer;background:linear-gradient(135deg,var(--fr),#1e40af);
+    margin-top:16px;
+  }
+  button:active{transform:scale(.98)}
+  button.vert{background:linear-gradient(135deg,var(--on),#15803d)}
+  button.mini{
+    padding:8px 12px;font-size:.85rem;margin:0;border-radius:10px;background:#374064;
+  }
+  button.mini.danger{background:var(--en)}
+
+  .msg{margin-top:14px;padding:12px 14px;border-radius:12px;font-size:.95rem;display:none}
+  .msg.ok{display:block;background:rgba(22,163,74,.18);border:1px solid rgba(22,163,74,.5)}
+  .msg.err{display:block;background:rgba(220,38,38,.18);border:1px solid rgba(220,38,38,.5)}
+
+  .code-nouveau{
+    font-family:ui-monospace,Menlo,Consolas,monospace;font-size:1.3rem;font-weight:800;
+    letter-spacing:.06em;margin-top:6px;
+  }
+
+  table{width:100%;border-collapse:collapse;font-size:.92rem}
+  th,td{padding:10px 8px;text-align:left;border-bottom:1px solid rgba(255,255,255,.08);vertical-align:middle}
+  th{color:var(--muted);font-weight:600;font-size:.82rem;text-transform:uppercase;letter-spacing:.04em}
+  td.code{font-family:ui-monospace,Menlo,Consolas,monospace;font-weight:700;white-space:nowrap}
+  .badge{
+    display:inline-block;padding:4px 10px;border-radius:999px;font-size:.78rem;font-weight:700;
+  }
+  .badge.active{background:rgba(22,163,74,.2);color:#4ade80;border:1px solid rgba(22,163,74,.5)}
+  .badge.expiree{background:rgba(220,38,38,.2);color:#f87171;border:1px solid rgba(220,38,38,.5)}
+  .actions{display:flex;gap:8px;white-space:nowrap}
+  .vide{color:var(--muted);text-align:center;padding:24px 8px}
+  .table-scroll{overflow-x:auto}
+
+  #ecranLicences{display:none}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>License management</h1>
+  <p class="sub">Lichi Live – Dialogue — administration</p>
+
+  <!-- ============ ECRAN 1 : mot de passe ============ -->
+  <div class="card" id="ecranLogin">
+    <h2>Sign in</h2>
+    <label for="mdp">Administrator password</label>
+    <input type="password" id="mdp" autocomplete="current-password">
+    <button id="btnLogin">Sign in</button>
+    <div class="msg" id="msgLogin"></div>
+  </div>
+
+  <!-- ============ ECRAN 2 : gestion ============ -->
+  <div id="ecranLicences">
+
+    <div class="card">
+      <h2>Create a license</h2>
+      <div class="row">
+        <div>
+          <label for="client">Customer name</label>
+          <input type="text" id="client" placeholder="e.g. Chanel">
+        </div>
+        <div>
+          <label for="heures">Number of hours</label>
+          <input type="number" id="heures" min="1" step="1" placeholder="e.g. 10">
+        </div>
+        <div>
+          <label for="expiration">Expiry date</label>
+          <input type="date" id="expiration">
+        </div>
+      </div>
+      <div class="row">
+        <div>
+          <label for="langueHote">Customer language (bottom of the screen)</label>
+          <select id="langueHote"></select>
+        </div>
+        <div>
+          <label for="langueInvite">Other person's language (top of the screen)</label>
+          <select id="langueInvite"></select>
+        </div>
+      </div>
+      <button class="vert" id="btnCreer">Create license</button>
+      <div class="msg" id="msgCreer"></div>
+    </div>
+
+    <div class="card">
+      <h2>Existing licenses</h2>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Code</th>
+              <th>Customer</th>
+              <th>Languages</th>
+              <th>Hours</th>
+              <th>Expires</th>
+              <th>Status</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="tbody">
+            <tr><td colspan="7" class="vide">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+(function(){
+  var motDePasse = "";
+
+  var $ = function(id){ return document.getElementById(id); };
+
+  // ---------------------------------------------------------------
+  // Catalogue COMPLET des langues de la traduction en direct Gemini
+  // (codes officiels BCP-47). Trié par nom anglais.
+  // ---------------------------------------------------------------
+  var LANGUES_GEMINI = [
+    ["af","Afrikaans"],["ak","Akan"],["sq","Albanian"],["am","Amharic"],
+    ["ar","Arabic"],["hy","Armenian"],["az","Azerbaijani"],["eu","Basque"],
+    ["be","Belarusian"],["bn","Bengali"],["bg","Bulgarian"],["my","Burmese"],
+    ["ca","Catalan"],["zh-Hans","Chinese (Simplified)"],["zh-Hant","Chinese (Traditional)"],["hr","Croatian"],
+    ["cs","Czech"],["da","Danish"],["nl","Dutch"],["en","English"],
+    ["et","Estonian"],["fil","Filipino"],["fi","Finnish"],["fr","French"],
+    ["gl","Galician"],["ka","Georgian"],["de","German"],["el","Greek"],
+    ["gu","Gujarati"],["ha","Hausa"],["he","Hebrew"],["hi","Hindi"],
+    ["hu","Hungarian"],["is","Icelandic"],["id","Indonesian"],["it","Italian"],
+    ["ja","Japanese"],["jv","Javanese"],["kn","Kannada"],["kk","Kazakh"],
+    ["km","Khmer"],["rw","Kinyarwanda"],["ko","Korean"],["lo","Lao"],
+    ["lv","Latvian"],["lt","Lithuanian"],["mk","Macedonian"],["ms","Malay"],
+    ["ml","Malayalam"],["mr","Marathi"],["mn","Mongolian"],["ne","Nepali"],
+    ["no","Norwegian"],["fa","Persian"],["pl","Polish"],["pt-BR","Portuguese (Brazil)"],
+    ["pt-PT","Portuguese (Portugal)"],["pa","Punjabi"],["ro","Romanian"],["ru","Russian"],
+    ["sr","Serbian"],["sd","Sindhi"],["si","Sinhala"],["sk","Slovak"],
+    ["sl","Slovenian"],["es","Spanish"],["su","Sundanese"],["sw","Swahili"],
+    ["sv","Swedish"],["ta","Tamil"],["te","Telugu"],["th","Thai"],
+    ["tr","Turkish"],["uk","Ukrainian"],["ur","Urdu"],["uz","Uzbek"],
+    ["vi","Vietnamese"],["zu","Zulu"]
+  ];
+
+  function nomLangue(code){
+    for (var i = 0; i < LANGUES_GEMINI.length; i++) {
+      if (LANGUES_GEMINI[i][0] === code) return LANGUES_GEMINI[i][1];
+    }
+    return code || "—";
+  }
+
+  // Remplit un menu déroulant avec toutes les langues
+  function remplirMenuLangues(select, defaut){
+    LANGUES_GEMINI.forEach(function(l){
+      var opt = document.createElement("option");
+      opt.value = l[0];
+      opt.textContent = l[1];
+      if (l[0] === defaut) opt.selected = true;
+      select.appendChild(opt);
+    });
+  }
+  remplirMenuLangues($("langueHote"), "en");   // par défaut : le client parle anglais
+  remplirMenuLangues($("langueInvite"), "he"); // par défaut : la personne en face parle hébreu
+
+  function montrer(msgEl, texte, type){
+    msgEl.textContent = "";
+    msgEl.className = "msg " + type;
+    if (typeof texte === "string") { msgEl.textContent = texte; }
+    else { msgEl.appendChild(texte); }
+  }
+  function cacher(msgEl){ msgEl.className = "msg"; msgEl.textContent = ""; }
+
+  // Appel generique vers la fonction serveur
+  function appel(donnees){
+    donnees.password = motDePasse;
+    return fetch("/api/licences", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(donnees)
+    }).then(function(r){ return r.json().then(function(j){ return { ok: r.ok, data: j }; }); });
+  }
+
+  // ---------- Connexion ----------
+  $("btnLogin").addEventListener("click", connexion);
+  $("mdp").addEventListener("keydown", function(e){ if(e.key === "Enter") connexion(); });
+
+  function connexion(){
+    cacher($("msgLogin"));
+    motDePasse = $("mdp").value;
+    if (!motDePasse) { montrer($("msgLogin"), "Please enter the password.", "err"); return; }
+    appel({ action: "list" }).then(function(res){
+      if (!res.ok) {
+        montrer($("msgLogin"), res.data.error || "Sign-in error.", "err");
+        return;
+      }
+      $("ecranLogin").style.display = "none";
+      $("ecranLicences").style.display = "block";
+      afficherListe(res.data.licences || []);
+    }).catch(function(){
+      montrer($("msgLogin"), "Server unreachable. Please try again.", "err");
+    });
+  }
+
+  // ---------- Creation ----------
+  $("btnCreer").addEventListener("click", function(){
+    cacher($("msgCreer"));
+    var client = $("client").value.trim();
+    var heures = parseFloat($("heures").value);
+    var expiration = $("expiration").value;
+
+    if (!client) { montrer($("msgCreer"), "Please enter the customer name.", "err"); return; }
+    if (!heures || heures <= 0) { montrer($("msgCreer"), "Please enter a valid number of hours.", "err"); return; }
+    if (!expiration) { montrer($("msgCreer"), "Please choose an expiry date.", "err"); return; }
+
+    $("btnCreer").disabled = true;
+    appel({
+      action: "create", client: client, heures: heures, expiration: expiration,
+      langueHote: $("langueHote").value,
+      langueInvite: $("langueInvite").value
+    })
+      .then(function(res){
+        $("btnCreer").disabled = false;
+        if (!res.ok) { montrer($("msgCreer"), res.data.error || "Error.", "err"); return; }
+
+        var lienClient = lienPourCode(res.data.licence.code);
+
+        var bloc = document.createElement("div");
+        bloc.appendChild(document.createTextNode("License created for " + client + ". Here is the link to send to the customer:"));
+        var code = document.createElement("div");
+        code.className = "code-nouveau";
+        code.style.fontSize = "1rem";
+        code.style.wordBreak = "break-all";
+        code.textContent = lienClient;
+        bloc.appendChild(code);
+        var btnCopieLien = document.createElement("button");
+        btnCopieLien.className = "mini";
+        btnCopieLien.style.marginTop = "10px";
+        btnCopieLien.textContent = "Copy link";
+        btnCopieLien.addEventListener("click", function(){
+          navigator.clipboard.writeText(lienClient).then(function(){
+            btnCopieLien.textContent = "Copied!";
+            setTimeout(function(){ btnCopieLien.textContent = "Copy link"; }, 1500);
+          });
+        });
+        bloc.appendChild(btnCopieLien);
+        montrer($("msgCreer"), bloc, "ok");
+
+        $("client").value = ""; $("heures").value = ""; $("expiration").value = "";
+        recharger();
+      })
+      .catch(function(){
+        $("btnCreer").disabled = false;
+        montrer($("msgCreer"), "Server unreachable. Please try again.", "err");
+      });
+  });
+
+  // ---------- Liste ----------
+  function recharger(){
+    appel({ action: "list" }).then(function(res){
+      if (res.ok) afficherListe(res.data.licences || []);
+    });
+  }
+
+  function afficherListe(licences){
+    var tbody = $("tbody");
+    tbody.textContent = "";
+
+    if (!licences.length) {
+      var tr = document.createElement("tr");
+      var td = document.createElement("td");
+      td.colSpan = 7; td.className = "vide";
+      td.textContent = "No licenses yet.";
+      tr.appendChild(td); tbody.appendChild(tr);
+      return;
+    }
+
+    var aujourdHui = new Date(); aujourdHui.setHours(0,0,0,0);
+
+    licences.forEach(function(lic){
+      var tr = document.createElement("tr");
+
+      var tdCode = document.createElement("td");
+      tdCode.className = "code"; tdCode.textContent = lic.code || "—";
+      tr.appendChild(tdCode);
+
+      var tdClient = document.createElement("td");
+      tdClient.textContent = lic.client || "—";
+      tr.appendChild(tdClient);
+
+      var tdLangues = document.createElement("td");
+      tdLangues.textContent = nomLangue(lic.langueHote || "en") + " ⇄ " + nomLangue(lic.langueInvite || "he");
+      tr.appendChild(tdLangues);
+
+      var tdHeures = document.createElement("td");
+      var restantes = (lic.heuresRestantes != null) ? lic.heuresRestantes : lic.heures;
+      tdHeures.textContent = arrondi(restantes) + " / " + lic.heures + " h";
+      tr.appendChild(tdHeures);
+
+      var tdExp = document.createElement("td");
+      tdExp.textContent = formaterDate(lic.expiration);
+      tr.appendChild(tdExp);
+
+      var tdStatut = document.createElement("td");
+      var badge = document.createElement("span");
+      var expiree = estExpiree(lic.expiration, aujourdHui) || restantes <= 0;
+      badge.className = "badge " + (expiree ? "expiree" : "active");
+      badge.textContent = expiree ? "Expired" : "Active";
+      tdStatut.appendChild(badge);
+      tr.appendChild(tdStatut);
+
+      var tdAct = document.createElement("td");
+      tdAct.className = "actions";
+
+      var btnCopier = document.createElement("button");
+      btnCopier.className = "mini"; btnCopier.textContent = "Copy link";
+      btnCopier.addEventListener("click", function(){
+        navigator.clipboard.writeText(lienPourCode(lic.code)).then(function(){
+          btnCopier.textContent = "Copied!";
+          setTimeout(function(){ btnCopier.textContent = "Copy link"; }, 1500);
+        });
+      });
+      tdAct.appendChild(btnCopier);
+
+      var btnSuppr = document.createElement("button");
+      btnSuppr.className = "mini danger"; btnSuppr.textContent = "Delete";
+      btnSuppr.addEventListener("click", function(){
+        if (!confirm("Delete license " + lic.code + " (" + (lic.client||"") + ") ?")) return;
+        appel({ action: "delete", id: lic.id }).then(function(res){
+          if (res.ok) recharger();
+          else alert(res.data.error || "Error while deleting.");
+        });
+      });
+      tdAct.appendChild(btnSuppr);
+
+      tr.appendChild(tdAct);
+      tbody.appendChild(tr);
+    });
+  }
+
+  function estExpiree(dateStr, aujourdHui){
+    if (!dateStr) return false;
+    var d = new Date(dateStr + "T00:00:00");
+    return d < aujourdHui;
+  }
+
+  // Le lien que le client ouvrira pour utiliser Lichi Live avec sa licence
+  function lienPourCode(code){
+    return location.origin + "/?licence=" + code;
+  }
+
+  // Arrondit joliment (ex : 20.9833 -> "20,98")
+  function arrondi(n){
+    return (Math.round(n * 100) / 100).toLocaleString("en-US");
+  }
+
+  function formaterDate(dateStr){
+    if (!dateStr) return "—";
+    var p = dateStr.split("-");
+    if (p.length !== 3) return dateStr;
+    return p[1] + "/" + p[2] + "/" + p[0];
+  }
+})();
+</script>
+</body>
+</html>

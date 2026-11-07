@@ -1,0 +1,775 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>Lichi Live – Dialogue EN-HE</title>
+<link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#B3124A">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Lichi EN-HE">
+<style>
+  :root{
+    --accent:#B3124A;
+    --accent2:#E0245E;
+    --bg:#F6F4F5;
+    --panel:#FFFFFF;
+    --text:#1B1B1F;
+    --muted:#7A7380;
+    --line:#E6E1E4;
+    --fs:1;                 /* taille du texte (bouton Aa) */
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Noto Sans Hebrew",Arial,sans-serif}
+  body{overflow:hidden}
+  button{font-family:inherit}
+
+  /* ---------- ÉCRAN D'ACCUEIL ---------- */
+  #home{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;
+    justify-content:center;padding:28px;text-align:center;gap:14px}
+  #home img{width:110px;height:110px;border-radius:26px;box-shadow:0 8px 26px rgba(138,46,67,.22)}
+  #home h1{margin:6px 0 0;font-size:2rem;letter-spacing:-.02em}
+  #home .pair{font-size:1.1rem;color:var(--accent);font-weight:700}
+  #home .info{color:var(--muted);font-size:.95rem;min-height:1.3em}
+  #btnStart{margin-top:18px;border:none;border-radius:999px;padding:18px 40px;font-size:1.2rem;
+    font-weight:700;color:#fff;background:linear-gradient(135deg,var(--accent2),var(--accent));
+    box-shadow:0 10px 26px rgba(179,18,74,.35);cursor:pointer}
+  #btnStart:disabled{opacity:.4}
+  .err{color:#B00020;background:#FDECEF;border:1px solid #F5C2CC;border-radius:12px;
+    padding:12px 14px;font-size:.95rem;display:none;max-width:420px}
+
+  /* ---------- ÉCRAN DE DIALOGUE ---------- */
+  #talk{position:fixed;inset:0;display:none;flex-direction:column}
+  #talk.on{display:flex}
+
+  .half{flex:1;min-height:0;display:flex;flex-direction:column;background:var(--panel)}
+  /* La moitié du HAUT est retournée : la personne en face la lit à l'endroit. */
+  .half.top{transform:rotate(180deg)}
+  .half.bottom{padding-bottom:env(safe-area-inset-bottom)}
+  .half.top{padding-bottom:env(safe-area-inset-top)}
+
+  .head{display:flex;align-items:center;gap:10px;padding:12px 18px;border-bottom:1px solid var(--line)}
+  .lang{font-weight:800;font-size:1.05rem;color:var(--accent)}
+  .state{color:var(--muted);font-size:.9rem;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .dot{width:9px;height:9px;border-radius:50%;background:#C9C3C7;flex:none}
+  .dot.live{background:#16a34a;box-shadow:0 0 0 0 rgba(22,163,74,.6);animation:ping 1.6s infinite}
+  @keyframes ping{0%{box-shadow:0 0 0 0 rgba(22,163,74,.5)}70%{box-shadow:0 0 0 9px rgba(22,163,74,0)}100%{box-shadow:0 0 0 0 rgba(22,163,74,0)}}
+
+  .feed{flex:1;min-height:0;overflow-y:auto;padding:14px 18px 18px;display:flex;flex-direction:column;gap:12px;
+    -webkit-overflow-scrolling:touch}
+  .feed .spacer{flex:1}
+  .placeholder{margin:auto;text-align:center;color:var(--muted);font-size:calc(1.5rem * var(--fs));line-height:1.35;padding:10px}
+
+  /* Message de L'AUTRE, traduit dans ma langue : grand et bien lisible */
+  .msg{max-width:94%;align-self:flex-start;font-size:calc(1.65rem * var(--fs));line-height:1.3;font-weight:600;
+    background:#FBEFF3;border-radius:18px 18px 18px 6px;padding:12px 16px;cursor:pointer;animation:rise .25s ease}
+  /* Ce que J'AI dit, transcrit dans ma langue : pour contrôler */
+  .msg.own{align-self:flex-end;font-size:calc(1.15rem * var(--fs));font-weight:500;color:#3a3540;
+    background:#F1EFF2;border-radius:18px 18px 6px 18px}
+  .msg .tag{display:block;font-size:.62em;font-weight:600;color:var(--muted);margin-bottom:3px;letter-spacing:.02em}
+  .msg.live::after{content:"▍";color:var(--accent);animation:blink 1s steps(2) infinite;margin-inline-start:2px}
+  .msg.playing{outline:3px solid var(--accent2)}
+  @keyframes blink{50%{opacity:0}}
+  @keyframes rise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+
+  /* Barre centrale : les commandes, au milieu de la table */
+  .bar{position:relative;height:64px;flex:none;display:flex;align-items:center;justify-content:space-between;
+    padding:0 18px;background:var(--bg);border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+  .side{width:56px;height:56px;border-radius:50%;border:1px solid var(--line);background:#fff;font-size:1.5rem;
+    display:flex;align-items:center;justify-content:center;cursor:pointer;position:relative;color:var(--text)}
+  .side.off{opacity:.55}
+  .side.off::after{content:"";position:absolute;width:62%;height:3px;background:#B00020;border-radius:2px;transform:rotate(-45deg)}
+  .side .lbl{font-weight:800;font-size:1.05rem}
+  #mic{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:88px;height:88px;border-radius:50%;
+    border:5px solid var(--bg);cursor:pointer;color:#fff;
+    background:linear-gradient(135deg,#9a9398,#6f6970);box-shadow:0 8px 22px rgba(0,0,0,.18);
+    display:flex;align-items:center;justify-content:center}
+  #mic svg{width:38px;height:38px}
+  #mic.live{background:linear-gradient(135deg,var(--accent2),var(--accent));animation:breath 2s ease-in-out infinite}
+  #mic.busy{opacity:.7}
+  @keyframes breath{0%,100%{box-shadow:0 0 0 0 rgba(224,36,94,.45)}50%{box-shadow:0 0 0 14px rgba(224,36,94,0)}}
+
+  .toast{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:30;background:rgba(27,27,31,.9);
+    color:#fff;border-radius:16px;padding:12px 18px;font-weight:700;font-size:1rem;display:none;text-align:center;pointer-events:none}
+
+  .overlay{position:fixed;inset:0;z-index:40;background:rgba(246,244,245,.96);display:none;align-items:center;
+    justify-content:center;padding:28px;text-align:center;flex-direction:column;gap:18px}
+  .overlay .m{font-size:1.25rem;font-weight:600;white-space:pre-line;max-width:440px}
+</style>
+</head>
+<body>
+
+<!-- ============ ACCUEIL (client titulaire de la licence) ============ -->
+<section id="home">
+  <img src="/icons/icon-192.png" alt="">
+  <h1>Lichi Live</h1>
+  <div class="pair" id="homePair">Dialogue</div>
+  <div class="info" id="homeInfo">Checking your license…</div>
+  <button id="btnStart" disabled onclick="startDialogue()">Start</button>
+  <div class="err" id="homeErr"></div>
+</section>
+
+<!-- ============ DIALOGUE (écran partagé, téléphone posé sur la table) ============ -->
+<section id="talk">
+  <!-- Moitié de la personne EN FACE (retournée) -->
+  <div class="half top" id="halfB">
+    <div class="head"><span class="dot" id="dotB"></span><span class="lang" id="langB"></span><span class="state" id="stateB" dir="auto"></span></div>
+    <div class="feed" id="feedB"><div class="spacer"></div><div class="placeholder" id="phB" dir="auto"></div></div>
+  </div>
+
+  <!-- Commandes au centre -->
+  <div class="bar">
+    <button class="side" id="btnVoice" onclick="toggleVoice()" aria-label="Spoken translation on/off">🔊</button>
+    <button id="mic" onclick="toggleMic()" aria-label="Start / pause">
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z"/></svg>
+    </button>
+    <button class="side" id="btnSize" onclick="cycleSize()" aria-label="Text size"><span class="lbl">Aa</span></button>
+  </div>
+
+  <!-- Ma moitié -->
+  <div class="half bottom" id="halfA">
+    <div class="head"><span class="dot" id="dotA"></span><span class="lang" id="langA"></span><span class="state" id="stateA" dir="auto"></span></div>
+    <div class="feed" id="feedA"><div class="spacer"></div><div class="placeholder" id="phA" dir="auto"></div></div>
+  </div>
+</section>
+
+<div class="toast" id="toast"></div>
+<div class="overlay" id="overlay"><div class="m" id="ovMsg"></div><button id="btnStart2" style="border:none;border-radius:999px;padding:16px 34px;font-size:1.1rem;font-weight:700;color:#fff;background:linear-gradient(135deg,#E0245E,#B3124A)" onclick="location.reload()">OK</button></div>
+
+<script>
+/* =======================================================================
+   LICHI LIVE – DIALOGUE
+   Un seul téléphone posé au milieu de la table, écran coupé en deux :
+     - en BAS : la personne A (le client, langue de l'hôte de la licence)
+     - en HAUT, retourné : la personne B en face (langue du participant)
+   Chacun parle quand il veut : la langue est reconnue automatiquement.
+   Moteur : traduction en direct GEMINI (même base que TalkWithoutBorders).
+   ======================================================================= */
+
+/* ---------- Textes de l'interface (une version par moitié d'écran) ---------- */
+const UI_BUILTIN = {
+  en: {
+    tapToStart: "Tap the microphone to start",
+    connecting: "Connecting…",
+    listening: "Listening — speak in {A} or {B}",
+    paused: "Paused — tap the microphone to continue",
+    youSaid: "You said",
+    voiceOn: "Spoken translation: ON",
+    voiceOff: "Spoken translation: OFF",
+    retrying: "Connection lost — retrying…",
+    inactive: "Paused after 15 minutes without speech.",
+    micError: "Microphone unavailable. Please allow microphone access.",
+    noHours: "This license has no hours left. Please contact us to top it up.",
+    tapReplay: "Tap a message to hear it again",
+  },
+  he: {
+    tapToStart: "הקישו על המיקרופון כדי להתחיל",
+    connecting: "מתחבר…",
+    listening: "מקשיב — דברו ב{A} או ב{B}",
+    paused: "מושהה — הקישו על המיקרופון כדי להמשיך",
+    youSaid: "אמרת",
+    voiceOn: "תרגום קולי: פועל",
+    voiceOff: "תרגום קולי: כבוי",
+    retrying: "החיבור נותק — מנסה שוב…",
+    inactive: "הושהה לאחר 15 דקות ללא דיבור.",
+    micError: "המיקרופון אינו זמין. אנא אשרו גישה למיקרופון.",
+    noHours: "לרישיון זה לא נותרו שעות.",
+    tapReplay: "הקישו על הודעה כדי לשמוע אותה שוב",
+  },
+  fr: {
+    tapToStart: "Touchez le micro pour commencer",
+    connecting: "Connexion…",
+    listening: "À l'écoute — parlez en {A} ou en {B}",
+    paused: "En pause — touchez le micro pour reprendre",
+    youSaid: "Vous avez dit",
+    voiceOn: "Traduction orale : ACTIVÉE",
+    voiceOff: "Traduction orale : DÉSACTIVÉE",
+    retrying: "Connexion perdue — nouvel essai…",
+    inactive: "Mis en pause après 15 minutes sans parole.",
+    micError: "Micro indisponible. Autorisez l'accès au micro.",
+    noHours: "Cette licence n'a plus d'heures disponibles.",
+    tapReplay: "Touchez un message pour le réécouter",
+  },
+};
+const UI = { A: UI_BUILTIN.en, B: UI_BUILTIN.he };
+
+async function loadStrings(code) {
+  if (UI_BUILTIN[code]) return UI_BUILTIN[code];
+  try {
+    const r = await fetch("/api/ui-strings", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ lang: code }) });
+    const d = await r.json();
+    if (r.ok && d.strings) return Object.assign({}, UI_BUILTIN.en, d.strings);
+  } catch (e) {}
+  return UI_BUILTIN.en;
+}
+
+const RTL = ["ar", "he", "fa", "ur", "sd"];
+
+// Nom d'une langue, écrit DANS une autre langue (ex : "Hebrew" en anglais, "אנגלית" en hébreu).
+function langName(code, inLang) {
+  try { const n = new Intl.DisplayNames([inLang], { type: "language" }).of(code); if (n && n !== code) return n; } catch (e) {}
+  return code.toUpperCase();
+}
+function cap(s) { return s ? s.charAt(0).toLocaleUpperCase() + s.slice(1) : s; }
+
+/* ---------- État ---------- */
+const S = {
+  A: "en", B: "he",        // A = moi (bas), B = la personne en face (haut)
+  licence: null,
+  running: false,          // micro ouvert et traduction active
+  micStream: null,
+  capCtx: null, capProc: null,
+  playCtx: null, playGain: null, nextPlay: 0,
+  voice: true,             // traduction ORALE activée ?
+  size: 1,
+};
+try { S.voice = localStorage.getItem("lichi_voice") !== "0"; } catch (e) {}
+try { S.size = parseFloat(localStorage.getItem("lichi_size")) || 1; } catch (e) {}
+
+/* =======================================================================
+   DÉMARRAGE : vérification de la licence (même système que les autres apps)
+   ======================================================================= */
+window.addEventListener("load", () => {
+  const p = new URLSearchParams(location.search);
+  let code = p.get("licence");
+  try {
+    if (code) localStorage.setItem("lichi_licence", code);
+    else code = localStorage.getItem("lichi_licence");
+  } catch (e) {}
+  checkLicence(code);
+});
+
+async function checkLicence(code) {
+  const info = document.getElementById("homeInfo");
+  if (!code) { info.textContent = ""; homeErr("Access reserved for customers. Please open the license link you were given."); return; }
+  try {
+    const r = await fetch("/api/licences", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "verify", code }) });
+    const d = await r.json();
+    if (!r.ok || !d.ok) { info.textContent = ""; homeErr(d.error || "Invalid license."); return; }
+    S.licence = d.licence;
+    S.A = d.licence.langueHote || "en";
+    S.B = d.licence.langueInvite || "he";
+    document.getElementById("homePair").textContent =
+      "Dialogue · " + S.A.toUpperCase() + " ⇄ " + S.B.toUpperCase();
+    info.textContent = d.licence.client + " — " + fmtHours(d.licence.heuresRestantes) + " left · expires " + fmtDate(d.licence.expiration);
+    document.getElementById("btnStart").disabled = false;
+    // On prépare les textes des deux moitiés pendant que l'utilisateur lit.
+    const [a, b] = await Promise.all([loadStrings(S.A), loadStrings(S.B)]);
+    UI.A = a; UI.B = b;
+  } catch (e) {
+    info.textContent = "";
+    homeErr("Unable to check your license. Please reload the page.");
+  }
+}
+function homeErr(m) { const e = document.getElementById("homeErr"); e.textContent = m; e.style.display = "block"; }
+function fmtHours(h) {
+  const t = Math.max(0, Math.round(h * 60)), H = Math.floor(t / 60), M = t % 60;
+  return H && M ? H + " h " + M + " min" : H ? H + (H > 1 ? " hours" : " hour") : M + " min";
+}
+function fmtDate(d) { const p = (d || "").split("-"); return p.length === 3 ? p[1] + "/" + p[2] + "/" + p[0] : d; }
+
+/* Prépare l'écran partagé (langues, sens d'écriture, textes). */
+function setupHalves() {
+  for (const side of ["A", "B"]) {
+    const lang = S[side];
+    const half = document.getElementById("half" + side);
+    half.setAttribute("dir", RTL.includes(lang.split("-")[0]) ? "rtl" : "ltr");
+    half.setAttribute("lang", lang);
+    document.getElementById("lang" + side).textContent = cap(langName(lang, lang));
+  }
+  document.documentElement.style.setProperty("--fs", S.size);
+  document.getElementById("btnVoice").classList.toggle("off", !S.voice);
+  setStatus("idle");
+}
+
+// Statut affiché dans les deux moitiés, chacune dans sa langue.
+let lastStatus = "idle";
+function setStatus(st) {
+  lastStatus = st;
+  for (const side of ["A", "B"]) {
+    const u = UI[side], lang = S[side];
+    let t = "";
+    if (st === "idle") t = u.tapToStart;
+    else if (st === "connecting") t = u.connecting;
+    else if (st === "listening") t = u.listening.replace("{A}", langName(S.A, lang)).replace("{B}", langName(S.B, lang));
+    else if (st === "paused") t = u.paused;
+    else if (st === "retrying") t = u.retrying;
+    document.getElementById("state" + side).textContent = t;
+    document.getElementById("dot" + side).classList.toggle("live", st === "listening");
+    const ph = document.getElementById("ph" + side);
+    if (ph) ph.textContent = st === "listening" ? u.tapReplay : t;
+  }
+  const mic = document.getElementById("mic");
+  mic.classList.toggle("live", st === "listening" || st === "retrying");
+  mic.classList.toggle("busy", st === "connecting");
+}
+
+/* =======================================================================
+   BOUTONS
+   ======================================================================= */
+async function startDialogue() {
+  document.getElementById("home").style.display = "none";
+  document.getElementById("talk").classList.add("on");
+  setupHalves();
+  await startListening();   // même geste : débloque le son ET le micro (iPhone)
+}
+
+function toggleMic() {
+  if (S.running) pauseListening("paused");
+  else startListening();
+}
+
+function toggleVoice() {
+  S.voice = !S.voice;
+  try { localStorage.setItem("lichi_voice", S.voice ? "1" : "0"); } catch (e) {}
+  document.getElementById("btnVoice").classList.toggle("off", !S.voice);
+  if (!S.voice) stopPlayback();
+  toast(UI.A[S.voice ? "voiceOn" : "voiceOff"], UI.B[S.voice ? "voiceOn" : "voiceOff"]);
+}
+
+function cycleSize() {
+  const tailles = [0.85, 1, 1.25, 1.5];
+  S.size = tailles[(tailles.indexOf(S.size) + 1) % tailles.length] || 1;
+  try { localStorage.setItem("lichi_size", S.size); } catch (e) {}
+  document.documentElement.style.setProperty("--fs", S.size);
+}
+
+let toastTimer = null;
+function toast(a, b) {
+  const t = document.getElementById("toast");
+  t.textContent = "";
+  const l1 = document.createElement("div"); l1.textContent = a;
+  const l2 = document.createElement("div"); l2.textContent = b; l2.style.transform = "rotate(180deg)"; l2.style.marginBottom = "8px";
+  if (b && b !== a) t.appendChild(l2);
+  t.appendChild(l1);
+  t.style.display = "block";
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => (t.style.display = "none"), 1600);
+}
+
+/* =======================================================================
+   ÉCOUTE : micro + deux « canaux » de traduction Gemini
+   - canal vers B : traduit ce que dit A (ex : anglais -> hébreu)
+   - canal vers A : traduit ce que dit B (ex : hébreu -> anglais)
+   Le même son du micro part dans les deux. Le canal qui reçoit déjà
+   SA propre langue ne fait que répéter : on l'ignore automatiquement.
+   C'est ce qui permet de reconnaître la langue immédiatement.
+   ======================================================================= */
+const IN_RATE = 16000, OUT_RATE = 24000;
+const pipes = {
+  toB: { target: "B", validFor: "A", ws: null, promise: null, timer: null, inT: "", outT: "", held: [] },
+  toA: { target: "A", validFor: "B", ws: null, promise: null, timer: null, inT: "", outT: "", held: [] },
+};
+
+async function startListening() {
+  if (S.running) return;
+  if (!S.licence) return;
+  setStatus("connecting");
+  unlockAudio();
+  try {
+    if (!S.micStream) {
+      S.micStream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      });
+    }
+  } catch (e) {
+    setStatus("idle");
+    toast(UI.A.micError, UI.B.micError);
+    return;
+  }
+  await preparePlayback();
+  await prepareCapture();
+  S.running = true;
+  try {
+    await Promise.all([ensurePipe(pipes.toB), ensurePipe(pipes.toA)]);
+    if (S.running) setStatus("listening");
+  } catch (e) {
+    if (S.running) { setStatus("retrying"); scheduleRebuild(pipes.toB); scheduleRebuild(pipes.toA); }
+  }
+  startLicenceClock();
+  noteActivity();
+  startInactivityWatch();
+  keepScreenOn(true);
+}
+
+function pauseListening(st) {
+  S.running = false;
+  for (const p of Object.values(pipes)) closePipe(p);
+  stopLicenceClock();
+  stopInactivityWatch();
+  keepScreenOn(false);
+  finalizeCurrent();
+  setStatus(st || "paused");
+}
+
+/* ---------- Capture du micro (PCM 16 kHz, comme TalkWithoutBorders) ---------- */
+async function prepareCapture() {
+  if (S.capCtx) { try { await S.capCtx.resume(); } catch (e) {} return; }
+  const Ctx = window.AudioContext || window.webkitAudioContext;
+  let ctx; try { ctx = new Ctx({ sampleRate: IN_RATE }); } catch (e) { ctx = new Ctx(); }
+  S.capCtx = ctx;
+  try { await ctx.resume(); } catch (e) {}
+  const src = ctx.createMediaStreamSource(S.micStream);
+  const proc = ctx.createScriptProcessor(4096, 1, 1);
+  S.capProc = proc;
+  proc.onaudioprocess = (e) => {
+    if (!S.running) return;
+    // Pendant que le téléphone PARLE (traduction orale), on n'envoie pas le
+    // micro : sinon la machine retraduirait sa propre voix.
+    if (isPlaying()) return;
+    let data = e.inputBuffer.getChannelData(0);
+    if (ctx.sampleRate !== IN_RATE) data = resample(data, ctx.sampleRate, IN_RATE);
+    const msg = JSON.stringify({ realtimeInput: { audio: { data: pcm16b64(data), mimeType: "audio/pcm;rate=16000" } } });
+    for (const p of Object.values(pipes)) {
+      if (p.ws && p.ws.readyState === WebSocket.OPEN) { try { p.ws.send(msg); } catch (err) {} }
+    }
+  };
+  src.connect(proc);
+  const mute = ctx.createGain(); mute.gain.value = 0;
+  proc.connect(mute); mute.connect(ctx.destination);
+}
+function resample(d, from, to) {
+  const r = from / to, n = Math.floor(d.length / r), o = new Float32Array(n);
+  for (let i = 0; i < n; i++) o[i] = d[Math.floor(i * r)] || 0;
+  return o;
+}
+function pcm16b64(f) {
+  const b = new ArrayBuffer(f.length * 2), v = new DataView(b);
+  for (let i = 0; i < f.length; i++) { const s = Math.max(-1, Math.min(1, f[i])); v.setInt16(i * 2, s < 0 ? s * 0x8000 : s * 0x7FFF, true); }
+  const u = new Uint8Array(b); let s = "";
+  for (let i = 0; i < u.length; i++) s += String.fromCharCode(u[i]);
+  return btoa(s);
+}
+
+/* ---------- Haut-parleur (voix traduite, PCM 24 kHz) ---------- */
+let audioUnlocked = false;
+function unlockAudio() {
+  if (audioUnlocked) return;
+  try { const a = new Audio(); a.play().catch(() => {}); audioUnlocked = true; } catch (e) {}
+}
+async function preparePlayback() {
+  if (!S.playCtx) {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    let ctx; try { ctx = new Ctx({ sampleRate: OUT_RATE }); } catch (e) { ctx = new Ctx(); }
+    S.playCtx = ctx;
+    S.playGain = ctx.createGain(); S.playGain.gain.value = 1; S.playGain.connect(ctx.destination);
+    // Petit bip silencieux : réveille le son sur iPhone
+    const b = ctx.createBuffer(1, 1, OUT_RATE); const s = ctx.createBufferSource(); s.buffer = b; s.connect(ctx.destination); s.start();
+  }
+  try { await S.playCtx.resume(); } catch (e) {}
+}
+let playingNodes = [];
+function playChunk(b64) {
+  const ctx = S.playCtx; if (!ctx) return;
+  const bin = atob(b64), u = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
+  const i16 = new Int16Array(u.buffer, 0, Math.floor(u.length / 2)); if (!i16.length) return;
+  const f = new Float32Array(i16.length); for (let i = 0; i < i16.length; i++) f[i] = i16[i] / 32768;
+  const buf = ctx.createBuffer(1, f.length, OUT_RATE); buf.getChannelData(0).set(f);
+  const n = ctx.createBufferSource(); n.buffer = buf; n.connect(S.playGain);
+  const now = ctx.currentTime;
+  if (S.nextPlay < now + 0.05) S.nextPlay = now + 0.05;
+  n.start(S.nextPlay); S.nextPlay += buf.duration;
+  playingNodes.push(n);
+  n.onended = () => { playingNodes = playingNodes.filter((x) => x !== n); };
+}
+function isPlaying() { return S.playCtx && S.playCtx.currentTime < S.nextPlay + 0.3; }
+function stopPlayback() {
+  for (const n of playingNodes) { try { n.stop(); } catch (e) {} }
+  playingNodes = []; if (S.playCtx) S.nextPlay = S.playCtx.currentTime;
+  document.querySelectorAll(".msg.playing").forEach((m) => m.classList.remove("playing"));
+}
+
+/* =======================================================================
+   CANAUX GEMINI (même méthode de connexion que TalkWithoutBorders)
+   ======================================================================= */
+function ensurePipe(p) {
+  if (p.ws && p.ws.readyState === WebSocket.OPEN) return Promise.resolve();
+  if (!p.promise) p.promise = openPipe(p).catch((e) => { p.promise = null; throw e; });
+  return p.promise;
+}
+function closePipe(p) {
+  if (p.timer) { clearTimeout(p.timer); p.timer = null; }
+  if (p.ws) { const w = p.ws; p.ws = null; try { w.onclose = null; w.close(); } catch (e) {} }
+  p.promise = null; p.inT = ""; p.outT = ""; p.held = [];
+}
+function scheduleRebuild(p) {
+  if (!S.running || p.timer) return;
+  p.timer = setTimeout(() => {
+    p.timer = null;
+    ensurePipe(p).then(() => { if (S.running && pipes.toA.ws && pipes.toB.ws) setStatus("listening"); })
+                 .catch(() => scheduleRebuild(p));
+  }, 1500);
+}
+
+async function openPipe(p) {
+  const portes = [
+    { version: "v1beta",  methode: "BidiGenerateContentConstrained", auth: "access_token" },
+    { version: "v1alpha", methode: "BidiGenerateContentConstrained", auth: "access_token" },
+    { version: "v1beta",  methode: "BidiGenerateContent",            auth: "key" },
+  ];
+  const formes = [
+    (t) => ({ generationConfig: { responseModalities: ["AUDIO"], inputAudioTranscription: {}, outputAudioTranscription: {}, translationConfig: { targetLanguageCode: t } } }),
+    (t) => ({ generationConfig: { responseModalities: ["AUDIO"], translationConfig: { targetLanguageCode: t } }, inputAudioTranscription: {}, outputAudioTranscription: {} }),
+    (t) => ({ generationConfig: { responseModalities: ["AUDIO"], translationConfig: { targetLanguageCode: t } } }),
+  ];
+  let last = "";
+  for (const porte of portes) for (const forme of formes) {
+    if (!S.running) throw new Error("stopped");
+    try {
+      const session = await getTicket(S[p.target]);
+      await connectPipe(p, session, porte, forme(session.target));
+      return;
+    } catch (e) { last = e && e.message ? e.message : String(e); }
+  }
+  throw new Error("Translation engine refused — " + last);
+}
+
+async function getTicket(target) {
+  const r = await fetch("/api/rt-session", { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ targetLanguage: target }) });
+  const d = await r.json();
+  if (!r.ok) throw new Error(d.error || "session refused");
+  return d;
+}
+
+function connectPipe(p, session, porte, setupBody) {
+  return new Promise((resolve, reject) => {
+    const url = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage." +
+      porte.version + ".GenerativeService." + porte.methode + "?" + porte.auth + "=" + encodeURIComponent(session.token);
+    const ws = new WebSocket(url);
+    let ready = false;
+    ws.onopen = () => ws.send(JSON.stringify({ setup: Object.assign({ model: session.model }, setupBody) }));
+    ws.onmessage = async (evt) => {
+      let msg;
+      try { msg = JSON.parse(evt.data instanceof Blob ? await evt.data.text() : evt.data); } catch (e) { return; }
+      if (msg.setupComplete) { ready = true; p.ws = ws; resolve(); return; }
+      const c = msg.serverContent; if (!c) return;
+      if (c.inputTranscription && c.inputTranscription.text) { p.inT += c.inputTranscription.text; noteActivity(); route(); }
+      if (c.outputTranscription && c.outputTranscription.text) { p.outT += c.outputTranscription.text; noteActivity(); route(); }
+      const parts = (c.modelTurn && c.modelTurn.parts) || [];
+      for (const part of parts) if (part.inlineData && part.inlineData.data) onAudio(p, part.inlineData.data);
+      if (c.turnComplete || c.generationComplete) endPipeTurn(p);
+    };
+    ws.onclose = (evt) => {
+      if (!ready) { reject(new Error((evt && evt.reason) || ("code " + (evt && evt.code)))); return; }
+      if (p.ws !== ws) return;
+      p.ws = null; p.promise = null;
+      if (S.running) { setStatus("retrying"); scheduleRebuild(p); }
+    };
+    setTimeout(() => { if (!ready) { try { ws.close(); } catch (e) {} reject(new Error("timed out")); } }, 8000);
+  });
+}
+
+/* =======================================================================
+   QUI PARLE ? (reconnaissance immédiate de la langue)
+   1) Si les deux langues ont des alphabets différents (anglais / hébreu),
+      on regarde simplement l'alphabet de ce qui a été entendu.
+   2) Sinon (ex : anglais / français), le canal qui reçoit sa propre langue
+      ne fait que répéter : celui dont la sortie RESSEMBLE à l'entrée
+      trahit la langue parlée.
+   ======================================================================= */
+const SCRIPTS = {
+  he: "Hebrew", ar: "Arabic", fa: "Arabic", ur: "Arabic", sd: "Arabic",
+  ru: "Cyrillic", uk: "Cyrillic", bg: "Cyrillic", sr: "Cyrillic", mk: "Cyrillic", be: "Cyrillic", kk: "Cyrillic", mn: "Cyrillic",
+  el: "Greek", hy: "Armenian", ka: "Georgian", hi: "Devanagari", mr: "Devanagari", ne: "Devanagari",
+  bn: "Bengali", gu: "Gujarati", pa: "Gurmukhi", ta: "Tamil", te: "Telugu", kn: "Kannada", ml: "Malayalam",
+  si: "Sinhala", th: "Thai", lo: "Lao", km: "Khmer", my: "Myanmar", am: "Ethiopic",
+  ja: "Hiragana", ko: "Hangul", zh: "Han",
+};
+function scriptOf(lang) { return SCRIPTS[lang.split("-")[0]] || "Latin"; }
+function countScript(text, script) {
+  let re;
+  try {
+    re = script === "Hiragana" ? /[\p{Script=Hiragana}\p{Script=Katakana}]/gu : new RegExp("\\p{Script=" + script + "}", "gu");
+  } catch (e) { return 0; }
+  return (text.match(re) || []).length;
+}
+function words(t) { return new Set(t.toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, " ").split(/\s+/).filter(Boolean)); }
+function similarity(a, b) {
+  const A = words(a), B = words(b); if (!A.size || !B.size) return 0;
+  let k = 0; for (const w of A) if (B.has(w)) k++;
+  return k / Math.min(A.size, B.size);
+}
+function detectSpeaker() {
+  const input = pipes.toB.inT.length >= pipes.toA.inT.length ? pipes.toB.inT : pipes.toA.inT;
+  const sA = scriptOf(S.A), sB = scriptOf(S.B);
+  if (sA !== sB && input.trim()) {
+    const a = countScript(input, sA), b = countScript(input, sB);
+    if (a + b >= 2) return b > a ? "B" : "A";
+  }
+  // Même alphabet : on compare l'entrée avec ce que sort chaque canal.
+  const oB = pipes.toB.outT, oA = pipes.toA.outT;
+  if (!input.trim()) return null;
+  if (oB.trim() && oA.trim()) return similarity(input, oB) > similarity(input, oA) ? "B" : "A";
+  if (oB.trim()) { const s = similarity(input, oB); if (s >= 0.6) return "B"; if (s < 0.25 && words(oB).size >= 3) return "A"; }
+  if (oA.trim()) { const s = similarity(input, oA); if (s >= 0.6) return "A"; if (s < 0.25 && words(oA).size >= 3) return "B"; }
+  return null;
+}
+
+/* =======================================================================
+   AFFICHAGE : chaque phrase apparaît dans les deux moitiés
+   - chez celui qui parle : sa propre phrase (pour contrôler)
+   - chez l'autre : la traduction, en grand
+   ======================================================================= */
+let current = null;   // { speaker, own, trans, audio[], elA, elB }
+
+function route() {
+  const sp = detectSpeaker();
+  if (!sp) return;
+  if (current && current.speaker !== sp) {
+    if (current.own || current.trans) finalizeCurrent(); else current = null;
+  }
+  const valid = sp === "A" ? pipes.toB : pipes.toA;
+  if (!current) current = { speaker: sp, own: "", trans: "", audio: [], elA: null, elB: null };
+  // Le son mis de côté en attendant de savoir qui parle : on joue le bon.
+  for (const b64 of valid.held) acceptAudio(b64);
+  valid.held = [];
+  current.own = valid.inT;
+  current.trans = valid.outT;
+  render(current, true);
+}
+
+function onAudio(p, b64) {
+  if (current && p.validFor === current.speaker) { acceptAudio(b64); return; }
+  // Pas encore sûr que ce canal soit le bon : on met de côté. S'il s'avère
+  // être le canal "écho", ce son sera jeté à la fin de sa phrase.
+  p.held.push(b64);
+  if (p.held.length > 400) p.held.shift();
+}
+function acceptAudio(b64) {
+  if (!current) return;
+  current.audio.push(b64);
+  if (S.voice) playChunk(b64);
+}
+
+function endPipeTurn(p) {
+  if (!current && (p.inT || p.outT)) {
+    // Fin de phrase sans décision : le seul canal qui a vraiment traduit l'emporte.
+    const o = p === pipes.toB ? pipes.toA : pipes.toB;
+    if (p.outT.trim() && !o.outT.trim() && similarity(p.inT, p.outT) < 0.6) {
+      current = { speaker: p.validFor, own: "", trans: "", audio: [], elA: null, elB: null };
+    }
+  }
+  route();
+  const isValid = current && p.validFor === current.speaker;
+  if (isValid) finalizeCurrent();
+  p.inT = ""; p.outT = ""; p.held = [];
+}
+
+function finalizeCurrent() {
+  if (!current) return;
+  render(current, false);
+  current = null;
+}
+
+function bubble(feed, own, label) {
+  const ph = feed.querySelector(".placeholder"); if (ph) ph.remove();
+  const el = document.createElement("div");
+  el.className = "msg live" + (own ? " own" : "");
+  el.setAttribute("dir", "auto");
+  if (own) { const t = document.createElement("span"); t.className = "tag"; t.textContent = label; el.appendChild(t); }
+  const tx = document.createElement("span"); tx.className = "tx"; el.appendChild(tx);
+  feed.appendChild(el);
+  const msgs = feed.querySelectorAll(".msg");
+  if (msgs.length > 40) msgs[0].remove();
+  return el;
+}
+
+function render(u, live) {
+  const speakerFeed = document.getElementById("feed" + u.speaker);
+  const listener = u.speaker === "A" ? "B" : "A";
+  const listenerFeed = document.getElementById("feed" + listener);
+  const own = (u.own || "").trim(), tr = (u.trans || "").trim();
+  if (own) {
+    if (!u["el" + u.speaker]) u["el" + u.speaker] = bubble(speakerFeed, true, UI[u.speaker].youSaid);
+    u["el" + u.speaker].querySelector(".tx").textContent = own;
+  }
+  if (tr) {
+    if (!u["el" + listener]) {
+      const el = bubble(listenerFeed, false);
+      const ref = u; el.onclick = () => replay(ref, el);
+      u["el" + listener] = el;
+    }
+    u["el" + listener].querySelector(".tx").textContent = tr;
+  }
+  for (const el of [u.elA, u.elB]) if (el) el.classList.toggle("live", live);
+  if (u.elA && own && u.speaker === "A") u.elA.onclick = () => replay(u, u.elA);
+  if (u.elB && own && u.speaker === "B") u.elB.onclick = () => replay(u, u.elB);
+  for (const f of [speakerFeed, listenerFeed]) f.scrollTop = f.scrollHeight;
+}
+
+// Toucher un message : on réentend la traduction (utile pour une personne malvoyante).
+function replay(u, el) {
+  if (!u.audio || !u.audio.length) return;
+  stopPlayback();
+  preparePlayback().then(() => {
+    for (const b of u.audio) playChunk(b);
+    el.classList.add("playing");
+    const ms = (S.nextPlay - S.playCtx.currentTime) * 1000;
+    setTimeout(() => el.classList.remove("playing"), Math.max(300, ms));
+  });
+}
+
+/* =======================================================================
+   LICENCE : décompte d'une minute toutes les 60 s pendant l'écoute
+   ======================================================================= */
+let licTimer = null;
+function startLicenceClock() {
+  if (licTimer || !S.licence) return;
+  licTimer = setInterval(async () => {
+    try {
+      const r = await fetch("/api/licences", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "use", code: S.licence.code, minutes: 1 }) });
+      const d = await r.json();
+      if ((r.ok && d.ok && d.heuresRestantes <= 0) || (d && d.ok === false)) noHours();
+    } catch (e) {}
+  }, 60000);
+}
+function stopLicenceClock() { if (licTimer) { clearInterval(licTimer); licTimer = null; } }
+function noHours() { pauseListening("idle"); showOverlay(UI.A.noHours); }
+
+/* Pause automatique après 15 minutes sans aucune parole. */
+const INACTIVE_MAX = 15 * 60 * 1000;
+let lastActivity = Date.now(), inactTimer = null;
+function noteActivity() { lastActivity = Date.now(); }
+function startInactivityWatch() {
+  if (inactTimer) return;
+  inactTimer = setInterval(() => {
+    if (Date.now() - lastActivity > INACTIVE_MAX) { pauseListening("paused"); toast(UI.A.inactive, UI.B.inactive); }
+  }, 30000);
+}
+function stopInactivityWatch() { if (inactTimer) { clearInterval(inactTimer); inactTimer = null; } }
+
+/* L'écran reste allumé pendant le dialogue (le téléphone est posé sur la table). */
+let wakeLock = null;
+async function keepScreenOn(on) {
+  try {
+    if (on && "wakeLock" in navigator && !wakeLock) {
+      wakeLock = await navigator.wakeLock.request("screen");
+      wakeLock.addEventListener("release", () => { wakeLock = null; });
+    } else if (!on && wakeLock) { await wakeLock.release(); wakeLock = null; }
+  } catch (e) {}
+}
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && S.running) {
+    keepScreenOn(true);
+    if (S.playCtx) S.playCtx.resume().catch(() => {});
+    if (S.capCtx) S.capCtx.resume().catch(() => {});
+  }
+});
+
+function showOverlay(m) {
+  document.getElementById("ovMsg").textContent = m;
+  document.getElementById("overlay").style.display = "flex";
+}
+</script>
+</body>
+</html>
