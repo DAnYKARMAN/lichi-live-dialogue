@@ -364,8 +364,8 @@ function toast(a, b) {
    ======================================================================= */
 const IN_RATE = 16000, OUT_RATE = 24000;
 const pipes = {
-  toB: { target: "B", validFor: "A", ws: null, promise: null, timer: null, inT: "", outT: "", held: [] },
-  toA: { target: "A", validFor: "B", ws: null, promise: null, timer: null, inT: "", outT: "", held: [] },
+  toB: { target: "B", validFor: "A", ws: null, promise: null, timer: null, inT: "", outT: "", inS: 0, outS: 0, held: [], skipEcho: false },
+  toA: { target: "A", validFor: "B", ws: null, promise: null, timer: null, inT: "", outT: "", inS: 0, outS: 0, held: [], skipEcho: false },
 };
 
 async function startListening() {
@@ -498,7 +498,7 @@ function ensurePipe(p) {
 function closePipe(p) {
   if (p.timer) { clearTimeout(p.timer); p.timer = null; }
   if (p.ws) { const w = p.ws; p.ws = null; try { w.onclose = null; w.close(); } catch (e) {} }
-  p.promise = null; p.inT = ""; p.outT = ""; p.held = [];
+  p.promise = null; p.inT = ""; p.outT = ""; p.inS = 0; p.outS = 0; p.held = []; p.skipEcho = false;
 }
 function scheduleRebuild(p) {
   if (!S.running || p.timer) return;
@@ -552,8 +552,8 @@ function connectPipe(p, session, porte, setupBody) {
       try { msg = JSON.parse(evt.data instanceof Blob ? await evt.data.text() : evt.data); } catch (e) { return; }
       if (msg.setupComplete) { ready = true; p.ws = ws; resolve(); return; }
       const c = msg.serverContent; if (!c) return;
-      if (c.inputTranscription && c.inputTranscription.text) { p.inT += c.inputTranscription.text; noteActivity(); route(); }
-      if (c.outputTranscription && c.outputTranscription.text) { p.outT += c.outputTranscription.text; noteActivity(); route(); }
+      if (c.inputTranscription && c.inputTranscription.text) { noteActivity(); onInputDelta(p, c.inputTranscription.text); }
+      if (c.outputTranscription && c.outputTranscription.text) { noteActivity(); onOutputDelta(p, c.outputTranscription.text); }
       const parts = (c.modelTurn && c.modelTurn.parts) || [];
       for (const part of parts) if (part.inlineData && part.inlineData.data) onAudio(p, part.inlineData.data);
       if (c.turnComplete || c.generationComplete) endPipeTurn(p);
@@ -598,49 +598,112 @@ function similarity(a, b) {
   let k = 0; for (const w of A) if (B.has(w)) k++;
   return k / Math.min(A.size, B.size);
 }
+/* Le texte entendu arrive en un seul flux continu (Gemini ne signale pas
+   toujours la fin des phrases). On découpe donc ce flux en « répliques » :
+   chaque canal garde un repère (inS / outS) qui marque le début de la
+   réplique en cours. */
+function master() { return (pipes.toB.ws || !pipes.toA.ws) ? pipes.toB : pipes.toA; }
+function validPipe(sp) { return sp === "A" ? pipes.toB : pipes.toA; }
+function segIn() { const m = master(); return m.inT.slice(m.inS); }
+function segOut(p) { return p.outT.slice(p.outS); }
+const differentScripts = () => scriptOf(S.A) !== scriptOf(S.B);
+
+// Langue d'un petit morceau de texte, d'après son alphabet (A, B ou inconnu).
+function langOfChunk(t) {
+  if (!differentScripts()) return null;
+  const a = countScript(t, scriptOf(S.A)), b = countScript(t, scriptOf(S.B));
+  if (a + b < 2) return null;            // ponctuation, une seule lettre : on ne décide pas
+  return b > a ? "B" : "A";
+}
+
+// Qui parle au début d'une nouvelle réplique ?
 function detectSpeaker() {
-  const input = pipes.toB.inT.length >= pipes.toA.inT.length ? pipes.toB.inT : pipes.toA.inT;
-  const sA = scriptOf(S.A), sB = scriptOf(S.B);
-  if (sA !== sB && input.trim()) {
-    const a = countScript(input, sA), b = countScript(input, sB);
-    if (a + b >= 2) return b > a ? "B" : "A";
-  }
-  // Même alphabet : on compare l'entrée avec ce que sort chaque canal.
-  const oB = pipes.toB.outT, oA = pipes.toA.outT;
+  const input = segIn();
   if (!input.trim()) return null;
+  const parLAlphabet = langOfChunk(input);
+  if (parLAlphabet) return parLAlphabet;
+  // Même alphabet (ex : anglais / français) : le canal qui répète trahit la langue.
+  const oB = segOut(pipes.toB), oA = segOut(pipes.toA);
   if (oB.trim() && oA.trim()) return similarity(input, oB) > similarity(input, oA) ? "B" : "A";
   if (oB.trim()) { const s = similarity(input, oB); if (s >= 0.6) return "B"; if (s < 0.25 && words(oB).size >= 3) return "A"; }
   if (oA.trim()) { const s = similarity(input, oA); if (s >= 0.6) return "A"; if (s < 0.25 && words(oA).size >= 3) return "B"; }
   return null;
 }
 
-/* =======================================================================
-   AFFICHAGE : chaque phrase apparaît dans les deux moitiés
-   - chez celui qui parle : sa propre phrase (pour contrôler)
-   - chez l'autre : la traduction, en grand
-   ======================================================================= */
-let current = null;   // { speaker, own, trans, audio[], elA, elB }
+let current = null;     // la réplique en cours { speaker, own, trans, audio[], elA, elB }
+let lastFinal = null;   // la réplique précédente (pour reconnaître les « échos »)
+
+function newUtterance(sp) {
+  const v = validPipe(sp);
+  for (const q of Object.values(pipes)) q.held = [];
+  // Changement de personne : le canal qui va traduire peut encore « finir »
+  // de répéter la réplique précédente pendant 1 à 2 secondes. On l'ignore.
+  if (lastFinal && lastFinal.speaker !== sp && lastFinal.own) {
+    v.skipEcho = true;
+    v.echoUntil = Date.now() + 2500;
+    v.echoText = normalise(lastFinal.own);
+  }
+  current = { speaker: sp, own: "", trans: "", audio: [], elA: null, elB: null };
+}
+function normalise(t) { return t.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim(); }
+
+// Nouveau morceau de ce qui est ENTENDU (transcription de la voix).
+function onInputDelta(p, t) {
+  const avant = p.inT.length;
+  p.inT += t;
+  if (p !== master()) return;              // un seul canal sert de référence
+  const lang = langOfChunk(t);
+  if (lang && current && current.speaker !== lang) {
+    // L'autre personne vient de prendre la parole : on coupe ICI.
+    cutHere(avant);
+    newUtterance(lang);
+  } else if (!differentScripts() && current) {
+    const sp = detectSpeaker();
+    if (sp && sp !== current.speaker) { cutHere(p.inS); newUtterance(sp); }
+  }
+  route();
+}
+
+// Nouveau morceau de TRADUCTION.
+function onOutputDelta(p, t) {
+  p.outT += t;
+  if (p.skipEcho) {
+    const piece = normalise(t);
+    if (Date.now() < p.echoUntil && (!piece || p.echoText.includes(piece))) {
+      p.outS = p.outT.length;              // fin d'écho de la réplique précédente : ignorée
+      return;
+    }
+    p.skipEcho = false;
+  }
+  route();
+}
+
+// Termine la réplique en cours et place les repères des canaux au point de coupe.
+function cutHere(coupeEntree) {
+  finalizeCurrent();
+  for (const q of Object.values(pipes)) { q.inS = q.inT.length; q.outS = q.outT.length; }
+  if (coupeEntree != null) master().inS = coupeEntree;
+}
 
 function route() {
-  const sp = detectSpeaker();
-  if (!sp) return;
-  if (current && current.speaker !== sp) {
-    if (current.own || current.trans) finalizeCurrent(); else current = null;
+  if (!current) {
+    const sp = detectSpeaker();
+    if (!sp) return;
+    newUtterance(sp);
   }
-  const valid = sp === "A" ? pipes.toB : pipes.toA;
-  if (!current) current = { speaker: sp, own: "", trans: "", audio: [], elA: null, elB: null };
-  // Le son mis de côté en attendant de savoir qui parle : on joue le bon.
-  for (const b64 of valid.held) acceptAudio(b64);
-  valid.held = [];
-  current.own = valid.inT;
-  current.trans = valid.outT;
+  const v = validPipe(current.speaker);
+  for (const b64 of v.held) acceptAudio(b64);
+  v.held = [];
+  current.own = segIn();
+  current.trans = segOut(v);
   render(current, true);
+  // Très longue réplique : on la fige à la fin d'une phrase pour garder l'écran lisible.
+  if (current.own.length > 260 && /[.!?。؟]\s*$/.test(current.own) && current.trans.trim()) cutHere();
 }
 
 function onAudio(p, b64) {
+  if (p.skipEcho && Date.now() < p.echoUntil) return;   // voix « écho » : jetée
   if (current && p.validFor === current.speaker) { acceptAudio(b64); return; }
-  // Pas encore sûr que ce canal soit le bon : on met de côté. S'il s'avère
-  // être le canal "écho", ce son sera jeté à la fin de sa phrase.
   p.held.push(b64);
   if (p.held.length > 400) p.held.shift();
 }
@@ -650,23 +713,16 @@ function acceptAudio(b64) {
   if (S.voice) playChunk(b64);
 }
 
+// Gemini signale parfois une fin de phrase : on fige alors la réplique.
 function endPipeTurn(p) {
-  if (!current && (p.inT || p.outT)) {
-    // Fin de phrase sans décision : le seul canal qui a vraiment traduit l'emporte.
-    const o = p === pipes.toB ? pipes.toA : pipes.toB;
-    if (p.outT.trim() && !o.outT.trim() && similarity(p.inT, p.outT) < 0.6) {
-      current = { speaker: p.validFor, own: "", trans: "", audio: [], elA: null, elB: null };
-    }
-  }
   route();
-  const isValid = current && p.validFor === current.speaker;
-  if (isValid) finalizeCurrent();
-  p.inT = ""; p.outT = ""; p.held = [];
+  if (current && p === validPipe(current.speaker) && (current.own || current.trans)) cutHere();
+  else p.held = [];
 }
 
 function finalizeCurrent() {
   if (!current) return;
-  render(current, false);
+  if (current.own || current.trans) { render(current, false); lastFinal = { speaker: current.speaker, own: current.own }; }
   current = null;
 }
 
